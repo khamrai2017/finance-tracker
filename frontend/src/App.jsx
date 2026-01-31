@@ -279,6 +279,7 @@ function App() {
   };
 
   const handleEditTransaction = (transaction) => {
+    setShowModifyTransaction(true);
     setEditingRowId(transaction.id);
     setEditingData({ ...transaction });
   };
@@ -286,6 +287,7 @@ function App() {
   const handleCancelEdit = () => {
     setEditingRowId(null);
     setEditingData({});
+    setShowModifyTransaction(false);
   };
 
   const handleSaveTransaction = async () => {
@@ -309,6 +311,7 @@ function App() {
         fetchTransactions();
         setEditingRowId(null);
         setEditingData({});
+        setShowModifyTransaction(false);
         alert('Transaction updated successfully!');
       }
     } catch (error) {
@@ -1234,6 +1237,13 @@ function App() {
                   <Plus size={18} />
                   Add Transaction
                 </button>
+                <button 
+                  className="btn btn-primary" 
+                  onClick={() => setShowModifyTransaction(!showModifyTransaction)}
+                  style={{ background: showModifyTransaction ? theme.secondary : theme.primary }}
+                >
+                  ✏️ Modify Transaction
+                </button>
               </div>
             </div>
 
@@ -1317,7 +1327,7 @@ function App() {
                     Amount
                   </th>
                   <th>Note</th>
-                  <th style={{ textAlign: 'center' }}>Action</th>
+                  {showModifyTransaction && <th style={{ textAlign: 'center' }}>Action</th>}
                 </tr>
               </thead>
               <tbody>
@@ -1329,7 +1339,7 @@ function App() {
                         <td style={{ fontWeight: 500, fontFamily: 'monospace', fontSize: '0.9rem' }}>{formatDate(transaction.date)}</td>
                         <td style={{ textAlign: 'center', fontWeight: 600, fontSize: '0.875rem', color: theme.primary }}>{formatMonth(transaction.date)}</td>
                         <td style={{ fontWeight: 600 }}>{transaction.title}</td>
-                        <td>
+                        <td style={{ maxWidth: '100px', overflow: 'hidden' }}>
                           <span 
                             className="category-badge" 
                             style={{ 
@@ -1346,32 +1356,36 @@ function App() {
                             {transaction.is_income ? '+' : '-'}{formatCurrency(transaction.amount)}
                           </span>
                         </td>
-                        <td style={{ color: theme.textSecondary, fontSize: '0.875rem', wordWrap: 'break-word', whiteSpace: 'normal', maxWidth: '300px' }}>
+                        <td style={{ color: theme.textSecondary, fontSize: '0.875rem', wordWrap: 'break-word', whiteSpace: 'normal', maxWidth: '100px', overflow: 'hidden' }}>
                           {transaction.note || '-'}
                         </td>
-                        <td style={{ textAlign: 'center', display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
-                          <button 
-                            className="copy-btn"
-                            onClick={() => handleCopyRow(transaction)}
-                            title="Copy row"
-                            style={{ padding: '0.4rem 0.6rem' }}
-                          >
-                            📋 Copy
-                          </button>
-                          <button 
-                            className="copy-btn"
-                            onClick={() => handleEditTransaction(transaction)}
-                            title="Edit row"
-                            style={{ padding: '0.4rem 0.6rem', background: theme.secondary }}
-                          >
-                            ✏️ Edit
-                          </button>
-                        </td>
+                        {showModifyTransaction && <td style={{ textAlign: 'center', display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                          {showModifyTransaction && (
+                            <>
+                              <button 
+                                className="copy-btn"
+                                onClick={() => handleCopyRow(transaction)}
+                                title="Copy row"
+                                style={{ padding: '0.4rem 0.6rem' }}
+                              >
+                                📋 Copy
+                              </button>
+                              <button 
+                                className="copy-btn"
+                                onClick={() => handleEditTransaction(transaction)}
+                                title="Edit row"
+                                style={{ padding: '0.4rem 0.6rem', background: theme.secondary }}
+                              >
+                                ✏️ Edit
+                              </button>
+                            </>
+                          )}
+                        </td>}
                       </tr>
                     )}
 
                     {/* Edit Row */}
-                    {editingRowId === transaction.id && (
+                    {showModifyTransaction && editingRowId === transaction.id && (
                       <tr style={{ background: '#fff3cd', borderRadius: '8px' }}>
                         <td colSpan="8" style={{ padding: '1.5rem', background: '#fff3cd' }}>
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
@@ -1380,7 +1394,7 @@ function App() {
                               <input
                                 type="datetime-local"
                                 className="form-input"
-                                value={new Date(editingData.date).toISOString().slice(0, 16)}
+                                value={formatDateTimeForInput(editingData.date)}
                                 onChange={(e) => setEditingData({ ...editingData, date: e.target.value })}
                                 style={{ background: 'white' }}
                               />
@@ -1473,7 +1487,7 @@ function App() {
                     )}
 
                     {/* Copy Row */}
-                    {copiedRowId === transaction.id && (
+                    {showModifyTransaction && copiedRowId === transaction.id && (
                       <tr style={{ background: '#d4edda', borderRadius: '8px' }}>
                         <td colSpan="8" style={{ padding: '1.5rem', background: '#d4edda' }}>
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
@@ -1482,7 +1496,7 @@ function App() {
                               <input
                                 type="datetime-local"
                                 className="form-input"
-                                value={new Date(copiedData.date).toISOString().slice(0, 16)}
+                                value={formatDateTimeForInput(copiedData.date)}
                                 onChange={(e) => setCopiedData({ ...copiedData, date: e.target.value })}
                                 style={{ background: 'white' }}
                               />
