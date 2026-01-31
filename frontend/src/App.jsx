@@ -1191,16 +1191,31 @@ function App() {
                       data={analytics.categoryBreakdown}
                       dataKey="total"
                       nameKey="name"
-                      cx="50%"
+                      cx="40%"
                       cy="50%"
-                      outerRadius={100}
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                      outerRadius={80}
+                      label={false}
                     >
                       {analytics.categoryBreakdown.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(value) => formatCurrency(value)} />
+                    <Tooltip 
+                      formatter={(value) => formatCurrency(value)}
+                      contentStyle={{ 
+                        background: theme.cardBg,
+                        border: `1px solid ${theme.primary}`,
+                        borderRadius: '12px',
+                        color: theme.text
+                      }}
+                      labelFormatter={(value) => `${value}`}
+                    />
+                    <Legend 
+                      layout="vertical"
+                      align="right"
+                      verticalAlign="middle"
+                      formatter={(value, entry) => `${value} ${(entry.payload.percent * 100).toFixed(0)}%`}
+                    />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -1216,9 +1231,10 @@ function App() {
                     <Tooltip 
                       formatter={(value) => formatCurrency(value)}
                       contentStyle={{ 
-                        background: 'rgba(30, 30, 60, 0.95)', 
-                        border: '1px solid rgba(139, 92, 246, 0.3)',
-                        borderRadius: '12px'
+                        background: theme.cardBg,
+                        border: `1px solid ${theme.primary}`,
+                        borderRadius: '12px',
+                        color: theme.text
                       }}
                     />
                     <Line 
@@ -1245,9 +1261,10 @@ function App() {
                   <Tooltip 
                     formatter={(value) => formatCurrency(value)}
                     contentStyle={{ 
-                      background: 'rgba(30, 30, 60, 0.95)', 
-                      border: '1px solid rgba(139, 92, 246, 0.3)',
-                      borderRadius: '12px'
+                      background: theme.cardBg,
+                      border: `1px solid ${theme.primary}`,
+                      borderRadius: '12px',
+                      color: theme.text
                     }}
                   />
                   <Bar dataKey="total" radius={[8, 8, 0, 0]}>
