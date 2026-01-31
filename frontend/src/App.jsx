@@ -1367,6 +1367,10 @@ function App() {
             <div style={{ marginTop: '1.5rem', marginBottom: '1.5rem', display: 'flex', gap: '1.5rem', alignItems: 'stretch' }}>
               <div style={{ flex: '0 0 auto', padding: '1.5rem', background: theme.accentLight, borderRadius: '8px', minWidth: '250px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%' }}>
+                  <h3 style={{ color: theme.text, marginBottom: '0.5rem', fontSize: '0.875rem', fontWeight: 600 }}>Transactions</h3>
+                  <span style={{ fontSize: '2rem', fontWeight: 700, color: theme.primary, marginBottom: '1.5rem' }}>
+                    {filteredTransactions.length}
+                  </span>
                   <h3 style={{ color: theme.text, marginBottom: '0.5rem', fontSize: '0.875rem', fontWeight: 600 }}>Overall Total</h3>
                   <span style={{ fontSize: '2rem', fontWeight: 700, color: calculateTotalAmount(filteredTransactions) >= 0 ? theme.secondary : '#ef4444' }}>
                     {calculateTotalAmount(filteredTransactions) >= 0 ? '+' : ''}{formatCurrency(calculateTotalAmount(filteredTransactions))}
@@ -1703,20 +1707,6 @@ function App() {
                   </React.Fragment>
                 ))}
               </tbody>
-              <tfoot>
-                <tr style={{ background: theme.accentLight, fontWeight: 600, borderTop: `2px solid ${theme.primary}` }}>
-                  <td colSpan="5" style={{ textAlign: 'right', paddingRight: '1rem' }}>
-                    <strong>Total:</strong>
-                  </td>
-                  <td>
-                    <span style={{ color: calculateTotalAmount(filteredTransactions) >= 0 ? theme.secondary : '#ef4444', fontWeight: 700 }}>
-                      {calculateTotalAmount(filteredTransactions) >= 0 ? '+' : ''}{formatCurrency(calculateTotalAmount(filteredTransactions))}
-                    </span>
-                  </td>
-                  <td></td>
-                  {showModifyTransaction && <td></td>}
-                </tr>
-              </tfoot>
             </table>
           </div>
         )}
