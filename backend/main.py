@@ -215,7 +215,8 @@ async def startup_event():
 @app.get("/api/transactions", response_model=List[TransactionResponse])
 async def get_transactions(
     skip: int = 0, 
-    limit: int = 100,
+    limit: int = 1000,
+    search: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     category_id: Optional[int] = None,
@@ -225,6 +226,12 @@ async def get_transactions(
 ):
     query = db.query(Transaction).filter(Transaction.user_id == 1)
     
+    if search:
+        query = query.filter(
+            (Transaction.title.ilike(f'%{search}%')) |
+            (Transaction.note.ilike(f'%{search}%')) |
+            (Transaction.merchant.ilike(f'%{search}%'))
+        )
     if start_date:
         query = query.filter(Transaction.date >= datetime.fromisoformat(start_date))
     if end_date:
@@ -281,6 +288,42 @@ async def create_transaction(transaction: TransactionCreate, db: Session = Depen
         category_color=db_transaction.category.color
     )
 
+@app.put("/api/transactions/{transaction_id}", response_model=TransactionResponse)
+async def update_transaction(transaction_id: int, transaction: TransactionCreate, db: Session = Depends(get_db)):
+    db_transaction = db.query(Transaction).filter(Transaction.id == transaction_id, Transaction.user_id == 1).first()
+    
+    if not db_transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    
+    db_transaction.account_id = transaction.account_id
+    db_transaction.category_id = transaction.category_id
+    db_transaction.amount = transaction.amount
+    db_transaction.currency = transaction.currency
+    db_transaction.title = transaction.title
+    db_transaction.note = transaction.note
+    db_transaction.date = transaction.date
+    db_transaction.is_income = transaction.is_income
+    db_transaction.merchant = transaction.merchant
+    db_transaction.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(db_transaction)
+    
+    return TransactionResponse(
+        id=db_transaction.id,
+        account_id=db_transaction.account_id,
+        category_id=db_transaction.category_id,
+        amount=db_transaction.amount,
+        currency=db_transaction.currency,
+        title=db_transaction.title,
+        note=db_transaction.note,
+        date=db_transaction.date,
+        is_income=db_transaction.is_income,
+        merchant=db_transaction.merchant,
+        account_name=db_transaction.account.name,
+        category_name=db_transaction.category.name,
+        category_color=db_transaction.category.color
+    )
 @app.delete("/api/transactions/{transaction_id}")
 async def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
     transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()

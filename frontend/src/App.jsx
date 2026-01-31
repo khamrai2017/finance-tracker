@@ -14,15 +14,89 @@ const formatCurrency = (amount) => {
 };
 
 const formatDate = (date) => {
-  return new Date(date).toLocaleDateString('en-IN', {
+  // Parse the date and convert to IST
+  const dateObj = new Date(date);
+  const istFormatter = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    year: '2-digit',
+    month: '2-digit',
     day: '2-digit',
-    month: 'short',
-    year: 'numeric'
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
   });
+  
+  const parts = istFormatter.formatToParts(dateObj);
+  const day = parts.find(p => p.type === 'day').value;
+  const month = parts.find(p => p.type === 'month').value;
+  const year = parts.find(p => p.type === 'year').value;
+  const hour = parts.find(p => p.type === 'hour').value;
+  const minute = parts.find(p => p.type === 'minute').value;
+  const second = parts.find(p => p.type === 'second').value;
+  
+  return `${day}/${month}/${year} ${hour}:${minute}:${second}`;
+};
+
+const formatMonth = (date) => {
+  const dateObj = new Date(date);
+  const istFormatter = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    month: 'short'
+  });
+  return istFormatter.format(dateObj);
+};
+
+const formatDateTime = (date) => {
+  const dateObj = new Date(date);
+  const istFormatter = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
+  return istFormatter.format(dateObj);
+};
+
+const formatDateTimeForInput = (date) => {
+  // Convert to IST and format for datetime-local input
+  const dateObj = new Date(date);
+  const istFormatter = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+  
+  const parts = istFormatter.formatToParts(dateObj);
+  const year = parts.find(p => p.type === 'year').value;
+  const month = parts.find(p => p.type === 'month').value;
+  const day = parts.find(p => p.type === 'day').value;
+  const hour = parts.find(p => p.type === 'hour').value;
+  const minute = parts.find(p => p.type === 'minute').value;
+  
+  return `${year}-${month}-${day}T${hour}:${minute}`;
 };
 
 // Theme Configuration
 const themes = {
+  facebookInspired: {
+    name: 'Modern Blue',
+    bg: 'linear-gradient(135deg, #f0f4f9 0%, #e8eef7 50%, #f5f8fc 100%)',
+    primary: '#1877F2',
+    secondary: '#31A24C',
+    tertiary: '#0ea5e9',
+    accentLight: 'rgba(24, 119, 242, 0.12)',
+    accentLighter: 'rgba(24, 119, 242, 0.06)',
+    cardBg: 'rgba(255, 255, 255, 0.85)',
+    text: '#1f2937',
+    textSecondary: '#6b7280',
+    headerBg: 'rgba(255, 255, 255, 0.95)'
+  },
   darkPurple: {
     name: 'Dark Purple',
     bg: 'linear-gradient(135deg, #0f0f23 0%, #1a1a3e 50%, #2d1b4e 100%)',
@@ -106,11 +180,16 @@ function App() {
   const [budgets, setBudgets] = useState([]);
   const [showAddTransaction, setShowAddTransaction] = useState(false);
   const [showAddBudget, setShowAddBudget] = useState(false);
+  const [showModifyTransaction, setShowModifyTransaction] = useState(false);
   const [filterCategory, setFilterCategory] = useState('');
   const [filterAccount, setFilterAccount] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [currentTheme, setCurrentTheme] = useState('darkPurple');
+  const [currentTheme, setCurrentTheme] = useState('facebookInspired');
   const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
+  const [editingRowId, setEditingRowId] = useState(null);
+  const [editingData, setEditingData] = useState({});
+  const [copiedRowId, setCopiedRowId] = useState(null);
+  const [copiedData, setCopiedData] = useState({});
   
   const theme = themes[currentTheme];
 
@@ -122,7 +201,7 @@ function App() {
     fetchCategories();
     fetchAnalytics();
     fetchBudgets();
-  }, []);
+  }, [searchTerm, filterCategory, filterAccount]);
 
   const fetchOverview = async () => {
     const response = await fetch(`${API_BASE}/analytics/overview`);
@@ -131,7 +210,10 @@ function App() {
   };
 
   const fetchTransactions = async () => {
-    const response = await fetch(`${API_BASE}/transactions?limit=500`);
+    const searchParam = searchTerm ? `&search=${encodeURIComponent(searchTerm)}` : '';
+    const categoryParam = filterCategory ? `&category_id=${filterCategory}` : '';
+    const accountParam = filterAccount ? `&account_id=${filterAccount}` : '';
+    const response = await fetch(`${API_BASE}/transactions?limit=1000${searchParam}${categoryParam}${accountParam}`);
     const data = await response.json();
     setTransactions(data);
   };
@@ -196,32 +278,109 @@ function App() {
     setSortConfig({ key, direction });
   };
 
-  // Filter and sort transactions
-  const filteredTransactions = transactions.filter(t => {
-    const matchesCategory = !filterCategory || t.category_id === parseInt(filterCategory);
-    const matchesAccount = !filterAccount || t.account_id === parseInt(filterAccount);
-    const matchesSearch = !searchTerm || 
-      t.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (t.note && t.note.toLowerCase().includes(searchTerm.toLowerCase()));
-    return matchesCategory && matchesAccount && matchesSearch;
-  }).sort((a, b) => {
-    let aVal = a[sortConfig.key];
-    let bVal = b[sortConfig.key];
+  const handleEditTransaction = (transaction) => {
+    setEditingRowId(transaction.id);
+    setEditingData({ ...transaction });
+  };
 
-    // Handle date comparison
+  const handleCancelEdit = () => {
+    setEditingRowId(null);
+    setEditingData({});
+  };
+
+  const handleSaveTransaction = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/transactions/${editingRowId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          account_id: editingData.account_id,
+          category_id: editingData.category_id,
+          amount: editingData.amount,
+          title: editingData.title,
+          note: editingData.note,
+          date: editingData.date,
+          is_income: editingData.is_income,
+          merchant: editingData.merchant
+        })
+      });
+
+      if (response.ok) {
+        fetchTransactions();
+        setEditingRowId(null);
+        setEditingData({});
+        alert('Transaction updated successfully!');
+      }
+    } catch (error) {
+      console.error('Error updating transaction:', error);
+      alert('Failed to update transaction');
+    }
+  };
+
+  const handleCopyRow = (transaction) => {
+    setCopiedRowId(transaction.id);
+    setCopiedData({ ...transaction, id: undefined });
+  };
+
+  const handleCancelCopy = () => {
+    setCopiedRowId(null);
+    setCopiedData({});
+  };
+
+  const handleSaveCopiedRow = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/transactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          account_id: copiedData.account_id,
+          category_id: copiedData.category_id,
+          amount: copiedData.amount,
+          title: copiedData.title,
+          note: copiedData.note,
+          date: copiedData.date,
+          is_income: copiedData.is_income,
+          merchant: copiedData.merchant
+        })
+      });
+
+      if (response.ok) {
+        fetchTransactions();
+        setCopiedRowId(null);
+        setCopiedData({});
+        alert('Transaction copied and saved successfully!');
+      }
+    } catch (error) {
+      console.error('Error creating copied transaction:', error);
+      alert('Failed to save copied transaction');
+    }
+  };
+
+  // Filter and sort transactions
+  const filteredTransactions = transactions.sort((a, b) => {
+    let aVal, bVal;
+
+    // Handle date/datetime comparison
     if (sortConfig.key === 'date') {
-      aVal = new Date(aVal).getTime();
-      bVal = new Date(bVal).getTime();
+      aVal = new Date(a.date).getTime();
+      bVal = new Date(b.date).getTime();
+    }
+    // Handle month comparison
+    else if (sortConfig.key === 'month') {
+      const aMonth = new Date(a.date).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+      const bMonth = new Date(b.date).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+      aVal = new Date(aMonth).getMonth();
+      bVal = new Date(bMonth).getMonth();
     }
     // Handle amount comparison
     else if (sortConfig.key === 'amount') {
-      aVal = parseFloat(aVal);
-      bVal = parseFloat(bVal);
+      aVal = parseFloat(a[sortConfig.key]);
+      bVal = parseFloat(b[sortConfig.key]);
     }
     // Handle string comparison
     else {
-      aVal = String(aVal).toLowerCase();
-      bVal = String(bVal).toLowerCase();
+      aVal = String(a[sortConfig.key] || '').toLowerCase();
+      bVal = String(b[sortConfig.key] || '').toLowerCase();
     }
 
     if (sortConfig.direction === 'asc') {
@@ -571,18 +730,21 @@ function App() {
 
         th {
           text-align: left;
-          padding: 1rem;
-          color: ${theme.textSecondary};
-          font-weight: 600;
-          font-size: 0.875rem;
+          padding: 1.2rem 1rem;
+          color: #4b5563;
+          font-weight: 700;
+          font-size: 0.8rem;
           text-transform: uppercase;
-          letter-spacing: 0.5px;
+          letter-spacing: 0.7px;
           cursor: pointer;
           user-select: none;
           position: relative;
+          background: #f3f4f6;
+          border-bottom: 2px solid #e5e7eb;
         }
 
         th:hover {
+          background: #e5e7eb;
           color: ${theme.text};
         }
 
@@ -604,25 +766,61 @@ function App() {
         }
 
         td {
-          padding: 1rem;
-          background: rgba(20, 20, 40, 0.4);
-          border-top: 1px solid ${theme.accentLight};
-          border-bottom: 1px solid ${theme.accentLight};
+          padding: 1rem 1.2rem;
+          background: white;
+          border-bottom: 1px solid #e5e7eb;
           color: ${theme.text};
+          transition: all 0.3s ease;
         }
 
         td:first-child {
-          border-left: 1px solid ${theme.accentLight};
-          border-radius: 12px 0 0 12px;
+          border-radius: 8px 0 0 8px;
         }
 
         td:last-child {
-          border-right: 1px solid ${theme.accentLight};
-          border-radius: 0 12px 12px 0;
+          border-radius: 0 8px 8px 0;
+        }
+
+        tbody tr {
+          background: white;
+          border-radius: 8px;
+        }
+
+        tbody tr:hover {
+          background: #f8fafb;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+        }
+
+        tbody tr:hover td {
+          background: #f8fafb;
+        }
+
+        .copy-btn {
+          background: ${theme.primary};
+          color: white;
+          border: none;
+          padding: 0.4rem 0.8rem;
+          border-radius: 6px;
+          cursor: pointer;
+          font-size: 0.75rem;
+          font-weight: 600;
+          transition: all 0.2s ease;
+          display: inline-flex;
+          align-items: center;
+          gap: 0.4rem;
+        }
+
+        .copy-btn:hover {
+          background: ${theme.secondary};
+          transform: scale(1.05);
+        }
+
+        .copy-btn:active {
+          transform: scale(0.98);
         }
 
         tr:hover td {
-          background: ${theme.accentLight};
+          background: #f8fafb;
         }
 
         .category-badge {
@@ -713,8 +911,8 @@ function App() {
         .form-textarea {
           width: 100%;
           padding: 0.875rem 1rem;
-          background: rgba(20, 20, 40, 0.6);
-          border: 1px solid ${theme.accentLight};
+          background: rgba(255, 255, 255, 0.9);
+          border: 2px solid #e5e7eb;
           border-radius: 12px;
           color: ${theme.text};
           font-size: 1rem;
@@ -727,7 +925,7 @@ function App() {
         .form-textarea:focus {
           outline: none;
           border-color: ${theme.primary};
-          box-shadow: 0 0 0 3px ${theme.accentLighter};
+          box-shadow: 0 0 0 3px rgba(24, 119, 242, 0.1);
         }
 
         .form-textarea {
@@ -1086,7 +1284,13 @@ function App() {
                     className={`sortable ${sortConfig.key === 'date' ? (sortConfig.direction === 'asc' ? 'sorted-asc' : 'sorted-desc') : ''}`}
                     onClick={() => handleSort('date')}
                   >
-                    Date
+                    DateTime
+                  </th>
+                  <th 
+                    className={`sortable ${sortConfig.key === 'month' ? (sortConfig.direction === 'asc' ? 'sorted-asc' : 'sorted-desc') : ''}`}
+                    onClick={() => handleSort('month')}
+                  >
+                    Month
                   </th>
                   <th 
                     className={`sortable ${sortConfig.key === 'title' ? (sortConfig.direction === 'asc' ? 'sorted-asc' : 'sorted-desc') : ''}`}
@@ -1113,34 +1317,263 @@ function App() {
                     Amount
                   </th>
                   <th>Note</th>
+                  <th style={{ textAlign: 'center' }}>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredTransactions.slice(0, 50).map(transaction => (
-                  <tr key={transaction.id}>
-                    <td>{formatDate(transaction.date)}</td>
-                    <td style={{ fontWeight: 600 }}>{transaction.title}</td>
-                    <td>
-                      <span 
-                        className="category-badge" 
-                        style={{ 
-                          background: `${transaction.category_color}20`,
-                          color: transaction.category_color
-                        }}
-                      >
-                        {transaction.category_name}
-                      </span>
-                    </td>
-                    <td>{transaction.account_name}</td>
-                    <td>
-                      <span className={`amount ${transaction.is_income ? 'income' : 'expense'}`}>
-                        {transaction.is_income ? '+' : '-'}{formatCurrency(transaction.amount)}
-                      </span>
-                    </td>
-                    <td style={{ color: theme.textSecondary, fontSize: '0.875rem' }}>
-                      {transaction.note || '-'}
-                    </td>
-                  </tr>
+                {filteredTransactions.map(transaction => (
+                  <React.Fragment key={transaction.id}>
+                    {/* Main Row */}
+                    {editingRowId !== transaction.id && copiedRowId !== transaction.id && (
+                      <tr>
+                        <td style={{ fontWeight: 500, fontFamily: 'monospace', fontSize: '0.9rem' }}>{formatDate(transaction.date)}</td>
+                        <td style={{ textAlign: 'center', fontWeight: 600, fontSize: '0.875rem', color: theme.primary }}>{formatMonth(transaction.date)}</td>
+                        <td style={{ fontWeight: 600 }}>{transaction.title}</td>
+                        <td>
+                          <span 
+                            className="category-badge" 
+                            style={{ 
+                              background: `${transaction.category_color}20`,
+                              color: transaction.category_color
+                            }}
+                          >
+                            {transaction.category_name}
+                          </span>
+                        </td>
+                        <td>{transaction.account_name}</td>
+                        <td>
+                          <span className={`amount ${transaction.is_income ? 'income' : 'expense'}`}>
+                            {transaction.is_income ? '+' : '-'}{formatCurrency(transaction.amount)}
+                          </span>
+                        </td>
+                        <td style={{ color: theme.textSecondary, fontSize: '0.875rem', wordWrap: 'break-word', whiteSpace: 'normal', maxWidth: '300px' }}>
+                          {transaction.note || '-'}
+                        </td>
+                        <td style={{ textAlign: 'center', display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                          <button 
+                            className="copy-btn"
+                            onClick={() => handleCopyRow(transaction)}
+                            title="Copy row"
+                            style={{ padding: '0.4rem 0.6rem' }}
+                          >
+                            📋 Copy
+                          </button>
+                          <button 
+                            className="copy-btn"
+                            onClick={() => handleEditTransaction(transaction)}
+                            title="Edit row"
+                            style={{ padding: '0.4rem 0.6rem', background: theme.secondary }}
+                          >
+                            ✏️ Edit
+                          </button>
+                        </td>
+                      </tr>
+                    )}
+
+                    {/* Edit Row */}
+                    {editingRowId === transaction.id && (
+                      <tr style={{ background: '#fff3cd', borderRadius: '8px' }}>
+                        <td colSpan="8" style={{ padding: '1.5rem', background: '#fff3cd' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.5rem', color: '#333' }}>DATE & TIME</label>
+                              <input
+                                type="datetime-local"
+                                className="form-input"
+                                value={new Date(editingData.date).toISOString().slice(0, 16)}
+                                onChange={(e) => setEditingData({ ...editingData, date: e.target.value })}
+                                style={{ background: 'white' }}
+                              />
+                            </div>
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.5rem', color: '#333' }}>TITLE</label>
+                              <input
+                                type="text"
+                                className="form-input"
+                                value={editingData.title}
+                                onChange={(e) => setEditingData({ ...editingData, title: e.target.value })}
+                                style={{ background: 'white' }}
+                              />
+                            </div>
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.5rem', color: '#333' }}>CATEGORY</label>
+                              <select
+                                className="form-select"
+                                value={editingData.category_id}
+                                onChange={(e) => setEditingData({ ...editingData, category_id: parseInt(e.target.value) })}
+                                style={{ background: 'white' }}
+                              >
+                                {categories.map(cat => (
+                                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.5rem', color: '#333' }}>ACCOUNT</label>
+                              <select
+                                className="form-select"
+                                value={editingData.account_id}
+                                onChange={(e) => setEditingData({ ...editingData, account_id: parseInt(e.target.value) })}
+                                style={{ background: 'white' }}
+                              >
+                                {accounts.map(acc => (
+                                  <option key={acc.id} value={acc.id}>{acc.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.5rem', color: '#333' }}>AMOUNT</label>
+                              <input
+                                type="number"
+                                className="form-input"
+                                value={editingData.amount}
+                                onChange={(e) => setEditingData({ ...editingData, amount: parseFloat(e.target.value) })}
+                                style={{ background: 'white' }}
+                              />
+                            </div>
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.5rem', color: '#333' }}>NOTE</label>
+                              <input
+                                type="text"
+                                className="form-input"
+                                value={editingData.note || ''}
+                                onChange={(e) => setEditingData({ ...editingData, note: e.target.value })}
+                                style={{ background: 'white' }}
+                              />
+                            </div>
+                            <div style={{ gridColumn: 'span 2' }}>
+                              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.5rem', color: '#333' }}>TYPE</label>
+                              <select
+                                className="form-select"
+                                value={editingData.is_income ? 'income' : 'expense'}
+                                onChange={(e) => setEditingData({ ...editingData, is_income: e.target.value === 'income' })}
+                                style={{ background: 'white' }}
+                              >
+                                <option value="expense">Expense</option>
+                                <option value="income">Income</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem', justifyContent: 'flex-end' }}>
+                            <button 
+                              className="btn btn-secondary"
+                              onClick={handleCancelEdit}
+                            >
+                              Cancel
+                            </button>
+                            <button 
+                              className="btn btn-primary"
+                              onClick={handleSaveTransaction}
+                            >
+                              Save Changes
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+
+                    {/* Copy Row */}
+                    {copiedRowId === transaction.id && (
+                      <tr style={{ background: '#d4edda', borderRadius: '8px' }}>
+                        <td colSpan="8" style={{ padding: '1.5rem', background: '#d4edda' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.5rem', color: '#155724' }}>DATE & TIME</label>
+                              <input
+                                type="datetime-local"
+                                className="form-input"
+                                value={new Date(copiedData.date).toISOString().slice(0, 16)}
+                                onChange={(e) => setCopiedData({ ...copiedData, date: e.target.value })}
+                                style={{ background: 'white' }}
+                              />
+                            </div>
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.5rem', color: '#155724' }}>TITLE</label>
+                              <input
+                                type="text"
+                                className="form-input"
+                                value={copiedData.title}
+                                onChange={(e) => setCopiedData({ ...copiedData, title: e.target.value })}
+                                style={{ background: 'white' }}
+                              />
+                            </div>
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.5rem', color: '#155724' }}>CATEGORY</label>
+                              <select
+                                className="form-select"
+                                value={copiedData.category_id}
+                                onChange={(e) => setCopiedData({ ...copiedData, category_id: parseInt(e.target.value) })}
+                                style={{ background: 'white' }}
+                              >
+                                {categories.map(cat => (
+                                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.5rem', color: '#155724' }}>ACCOUNT</label>
+                              <select
+                                className="form-select"
+                                value={copiedData.account_id}
+                                onChange={(e) => setCopiedData({ ...copiedData, account_id: parseInt(e.target.value) })}
+                                style={{ background: 'white' }}
+                              >
+                                {accounts.map(acc => (
+                                  <option key={acc.id} value={acc.id}>{acc.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.5rem', color: '#155724' }}>AMOUNT</label>
+                              <input
+                                type="number"
+                                className="form-input"
+                                value={copiedData.amount}
+                                onChange={(e) => setCopiedData({ ...copiedData, amount: parseFloat(e.target.value) })}
+                                style={{ background: 'white' }}
+                              />
+                            </div>
+                            <div>
+                              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.5rem', color: '#155724' }}>NOTE</label>
+                              <input
+                                type="text"
+                                className="form-input"
+                                value={copiedData.note || ''}
+                                onChange={(e) => setCopiedData({ ...copiedData, note: e.target.value })}
+                                style={{ background: 'white' }}
+                              />
+                            </div>
+                            <div style={{ gridColumn: 'span 2' }}>
+                              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.5rem', color: '#155724' }}>TYPE</label>
+                              <select
+                                className="form-select"
+                                value={copiedData.is_income ? 'income' : 'expense'}
+                                onChange={(e) => setCopiedData({ ...copiedData, is_income: e.target.value === 'income' })}
+                                style={{ background: 'white' }}
+                              >
+                                <option value="expense">Expense</option>
+                                <option value="income">Income</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem', justifyContent: 'flex-end' }}>
+                            <button 
+                              className="btn btn-secondary"
+                              onClick={handleCancelCopy}
+                            >
+                              Cancel
+                            </button>
+                            <button 
+                              className="btn btn-primary"
+                              onClick={handleSaveCopiedRow}
+                            >
+                              Save as New Transaction
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
