@@ -963,12 +963,33 @@ function App() {
           display: flex;
           gap: 1rem;
           margin-bottom: 1.5rem;
-          flex-wrap: wrap;
+          flex-wrap: nowrap;
+          align-items: flex-end;
+          overflow-x: auto;
         }
 
         .filter-group {
-          flex: 1;
-          min-width: 200px;
+          flex: 0 0 auto;
+          min-width: auto;
+        }
+
+        .filter-group:nth-child(1) {
+          flex: 1 1 auto;
+          min-width: 150px;
+        }
+
+        .filter-group:nth-child(2),
+        .filter-group:nth-child(3) {
+          flex: 0 0 150px;
+        }
+
+        .filter-group:nth-child(4),
+        .filter-group:nth-child(5) {
+          flex: 0 0 120px;
+        }
+
+        .filter-group:nth-child(6) {
+          flex: 0 0 auto;
         }
 
         .budget-card {
@@ -1343,20 +1364,20 @@ function App() {
             </div>
 
             {/* Totals Summary */}
-            <div style={{ marginTop: '1.5rem', marginBottom: '1.5rem' }}>
-              <div style={{ padding: '1.5rem', background: theme.accentLight, borderRadius: '8px', marginBottom: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ color: theme.text }}>Overall Total:</h3>
-                  <span style={{ fontSize: '1.75rem', fontWeight: 700, color: calculateTotalAmount(filteredTransactions) >= 0 ? theme.secondary : '#ef4444' }}>
+            <div style={{ marginTop: '1.5rem', marginBottom: '1.5rem', display: 'flex', gap: '1.5rem', alignItems: 'stretch' }}>
+              <div style={{ flex: '0 0 auto', padding: '1.5rem', background: theme.accentLight, borderRadius: '8px', minWidth: '250px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%' }}>
+                  <h3 style={{ color: theme.text, marginBottom: '0.5rem', fontSize: '0.875rem', fontWeight: 600 }}>Overall Total</h3>
+                  <span style={{ fontSize: '2rem', fontWeight: 700, color: calculateTotalAmount(filteredTransactions) >= 0 ? theme.secondary : '#ef4444' }}>
                     {calculateTotalAmount(filteredTransactions) >= 0 ? '+' : ''}{formatCurrency(calculateTotalAmount(filteredTransactions))}
                   </span>
                 </div>
               </div>
 
               {/* Account-wise Summary */}
-              <div style={{ padding: '1.5rem', background: theme.accentLight, borderRadius: '8px' }}>
-                <h3 style={{ marginBottom: '1rem', color: theme.text }}>Account-wise Summary</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1rem' }}>
+              <div style={{ flex: 1, padding: '1.5rem', background: theme.accentLight, borderRadius: '8px' }}>
+                <h3 style={{ marginBottom: '1rem', color: theme.text, fontSize: '0.875rem', fontWeight: 600 }}>Account-wise Summary</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
                   {Object.entries(calculateSumByAccount(filteredTransactions)).map(([accountName, sum]) => (
                     <div
                       key={accountName}
