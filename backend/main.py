@@ -92,6 +92,7 @@ class TransactionCreate(BaseModel):
     account_id: int
     category_id: int
     amount: float
+    currency: str = "INR"
     title: str
     note: Optional[str] = None
     date: datetime

@@ -183,6 +183,8 @@ function App() {
   const [showModifyTransaction, setShowModifyTransaction] = useState(false);
   const [filterCategory, setFilterCategory] = useState('');
   const [filterAccount, setFilterAccount] = useState('');
+  const [filterStartDate, setFilterStartDate] = useState('');
+  const [filterEndDate, setFilterEndDate] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [currentTheme, setCurrentTheme] = useState('facebookInspired');
   const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
@@ -201,7 +203,7 @@ function App() {
     fetchCategories();
     fetchAnalytics();
     fetchBudgets();
-  }, [searchTerm, filterCategory, filterAccount]);
+  }, [searchTerm, filterCategory, filterAccount, filterStartDate, filterEndDate]);
 
   const fetchOverview = async () => {
     const response = await fetch(`${API_BASE}/analytics/overview`);
@@ -213,7 +215,9 @@ function App() {
     const searchParam = searchTerm ? `&search=${encodeURIComponent(searchTerm)}` : '';
     const categoryParam = filterCategory ? `&category_id=${filterCategory}` : '';
     const accountParam = filterAccount ? `&account_id=${filterAccount}` : '';
-    const response = await fetch(`${API_BASE}/transactions?limit=1000${searchParam}${categoryParam}${accountParam}`);
+    const startDateParam = filterStartDate ? `&start_date=${filterStartDate}` : '';
+    const endDateParam = filterEndDate ? `&end_date=${filterEndDate}` : '';
+    const response = await fetch(`${API_BASE}/transactions?limit=1000${searchParam}${categoryParam}${accountParam}${startDateParam}${endDateParam}`);
     const data = await response.json();
     setTransactions(data);
   };
@@ -357,6 +361,25 @@ function App() {
       console.error('Error creating copied transaction:', error);
       alert('Failed to save copied transaction');
     }
+  };
+
+  // Calculate total transaction amounts
+  const calculateTotalAmount = (transactionList) => {
+    return transactionList.reduce((sum, transaction) => {
+      return sum + (transaction.is_income ? transaction.amount : -transaction.amount);
+    }, 0);
+  };
+
+  // Calculate sum by account
+  const calculateSumByAccount = (transactionList) => {
+    const sumByAccount = {};
+    transactionList.forEach(transaction => {
+      if (!sumByAccount[transaction.account_name]) {
+        sumByAccount[transaction.account_name] = 0;
+      }
+      sumByAccount[transaction.account_name] += (transaction.is_income ? transaction.amount : -transaction.amount);
+    });
+    return sumByAccount;
   };
 
   // Filter and sort transactions
@@ -1285,6 +1308,75 @@ function App() {
                   ))}
                 </select>
               </div>
+              <div className="filter-group">
+                <label className="form-label">Start Date</label>
+                <input
+                  type="date"
+                  className="form-input"
+                  value={filterStartDate}
+                  onChange={(e) => setFilterStartDate(e.target.value)}
+                />
+              </div>
+              <div className="filter-group">
+                <label className="form-label">End Date</label>
+                <input
+                  type="date"
+                  className="form-input"
+                  value={filterEndDate}
+                  onChange={(e) => setFilterEndDate(e.target.value)}
+                />
+              </div>
+              <div className="filter-group" style={{ display: 'flex', alignItems: 'flex-end' }}>
+                <button 
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setSearchTerm('');
+                    setFilterCategory('');
+                    setFilterAccount('');
+                    setFilterStartDate('');
+                    setFilterEndDate('');
+                  }}
+                >
+                  Reset Selection
+                </button>
+              </div>
+            </div>
+
+            {/* Totals Summary */}
+            <div style={{ marginTop: '1.5rem', marginBottom: '1.5rem' }}>
+              <div style={{ padding: '1.5rem', background: theme.accentLight, borderRadius: '8px', marginBottom: '1rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3 style={{ color: theme.text }}>Overall Total:</h3>
+                  <span style={{ fontSize: '1.75rem', fontWeight: 700, color: calculateTotalAmount(filteredTransactions) >= 0 ? theme.secondary : '#ef4444' }}>
+                    {calculateTotalAmount(filteredTransactions) >= 0 ? '+' : ''}{formatCurrency(calculateTotalAmount(filteredTransactions))}
+                  </span>
+                </div>
+              </div>
+
+              {/* Account-wise Summary */}
+              <div style={{ padding: '1.5rem', background: theme.accentLight, borderRadius: '8px' }}>
+                <h3 style={{ marginBottom: '1rem', color: theme.text }}>Account-wise Summary</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1rem' }}>
+                  {Object.entries(calculateSumByAccount(filteredTransactions)).map(([accountName, sum]) => (
+                    <div
+                      key={accountName}
+                      style={{
+                        background: theme.cardBg,
+                        padding: '1rem',
+                        borderRadius: '6px',
+                        border: `1px solid ${theme.accentLight}`
+                      }}
+                    >
+                      <div style={{ fontSize: '0.875rem', color: theme.textSecondary, marginBottom: '0.5rem' }}>
+                        {accountName}
+                      </div>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: sum >= 0 ? theme.secondary : '#ef4444' }}>
+                        {sum >= 0 ? '+' : ''}{formatCurrency(sum)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
 
             <table>
@@ -1590,6 +1682,20 @@ function App() {
                   </React.Fragment>
                 ))}
               </tbody>
+              <tfoot>
+                <tr style={{ background: theme.accentLight, fontWeight: 600, borderTop: `2px solid ${theme.primary}` }}>
+                  <td colSpan="5" style={{ textAlign: 'right', paddingRight: '1rem' }}>
+                    <strong>Total:</strong>
+                  </td>
+                  <td>
+                    <span style={{ color: calculateTotalAmount(filteredTransactions) >= 0 ? theme.secondary : '#ef4444', fontWeight: 700 }}>
+                      {calculateTotalAmount(filteredTransactions) >= 0 ? '+' : ''}{formatCurrency(calculateTotalAmount(filteredTransactions))}
+                    </span>
+                  </td>
+                  <td></td>
+                  {showModifyTransaction && <td></td>}
+                </tr>
+              </tfoot>
             </table>
           </div>
         )}
