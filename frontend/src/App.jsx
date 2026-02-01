@@ -433,18 +433,14 @@ function App() {
           return;
         }
 
+        // Auto-detect column mapping based on header names
+        const columns = Object.keys(jsonData[0]);
+        const autoMapping = autoDetectColumns(columns);
+
         // Store raw data and show mapping modal
         setRawImportData(jsonData);
+        setColumnMapping(autoMapping);
         setShowColumnMapping(true);
-        
-        // Reset mapping
-        setColumnMapping({
-          title: '',
-          amount: '',
-          date: '',
-          debitCredit: '',
-          note: ''
-        });
         setSelectedCategoryForImport('');
         setSelectedAccountForImport('');
       } catch (error) {
@@ -452,6 +448,41 @@ function App() {
       }
     };
     reader.readAsArrayBuffer(file);
+  };
+
+  // Auto-detect columns based on common naming patterns
+  const autoDetectColumns = (columns) => {
+    const mapping = {
+      title: '',
+      amount: '',
+      date: '',
+      debitCredit: '',
+      note: ''
+    };
+
+    const titlePatterns = /^(title|Transaction Details|Transaction|Details|description|narration|particulars|name|payee|merchant)$/i;
+    const amountPatterns = /^(amount|value|amt|transaction amount|debit|credit)$/i;
+    const datePatterns = /^(date|transaction date|tran date|posting date)$/i;
+    const debitCreditPatterns = /^(type|debit\/credit|debit.credit|dr\/cr|transaction type|narration type)$/i;
+    const notePatterns = /^(note|notes|remarks|description|comments)$/i;
+
+    columns.forEach(col => {
+      const lowerCol = col.toLowerCase().trim();
+      
+      if (!mapping.title && titlePatterns.test(lowerCol)) {
+        mapping.title = col;
+      } else if (!mapping.amount && amountPatterns.test(lowerCol)) {
+        mapping.amount = col;
+      } else if (!mapping.date && datePatterns.test(lowerCol)) {
+        mapping.date = col;
+      } else if (!mapping.debitCredit && debitCreditPatterns.test(lowerCol)) {
+        mapping.debitCredit = col;
+      } else if (!mapping.note && notePatterns.test(lowerCol)) {
+        mapping.note = col;
+      }
+    });
+
+    return mapping;
   };
 
   const handleApplyColumnMapping = () => {
@@ -2221,12 +2252,28 @@ function App() {
 
               <div style={{ padding: '1.5rem' }}>
                 <p style={{ marginBottom: '1.5rem', color: theme.textSecondary }}>
-                  Select which column from your Excel file corresponds to each field. All transactions will use the same Category and Account. We found <strong>{Object.keys(rawImportData[0]).length}</strong> column(s).
+                  Columns have been automatically detected based on headers. You can modify the mapping below. All transactions will use the same Category and Account. We found <strong>{Object.keys(rawImportData[0]).length}</strong> column(s).
                 </p>
+
+                {/* Auto-detect Success Indicator */}
+                {(columnMapping.title || columnMapping.amount) && (
+                  <div style={{ 
+                    padding: '1rem', 
+                    marginBottom: '1.5rem', 
+                    backgroundColor: theme.accentLighter, 
+                    border: `1px solid ${theme.accentLight}`,
+                    borderRadius: '8px',
+                    color: theme.textSecondary,
+                    fontSize: '0.9rem'
+                  }}>
+                    ✓ Auto-detected: {[columnMapping.title && 'Title', columnMapping.amount && 'Amount', columnMapping.date && 'Date', columnMapping.debitCredit && 'Debit/Credit', columnMapping.note && 'Note'].filter(Boolean).join(', ')}
+                  </div>
+                )}
 
                 {/* Mapping Controls */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
                   <div className="form-group">
+
                     <label className="form-label" style={{ color: '#ef4444' }}>Title *</label>
                     <select
                       className="form-select"
@@ -2328,20 +2375,27 @@ function App() {
                   </div>
                 </div>
 
-                {/* Preview Table - First 10 rows */}
+                {/* Preview Table - All rows */}
                 <div style={{ marginBottom: '1.5rem' }}>
-                  <h3 style={{ marginBottom: '1rem', fontSize: '1.1rem', fontWeight: 600 }}>Preview (First 10 rows)</h3>
-                  <div style={{ overflowX: 'auto', border: `1px solid ${theme.accentLight}`, borderRadius: '8px' }}>
+                  <h3 style={{ marginBottom: '1rem', fontSize: '1.1rem', fontWeight: 600 }}>Preview - All {rawImportData.length} row(s)</h3>
+                  <div style={{ overflowX: 'auto', border: `1px solid ${theme.accentLight}`, borderRadius: '8px', maxHeight: '500px', overflowY: 'auto' }}>
                     <table style={{ fontSize: '0.85rem' }}>
-                      <thead>
+                      <thead style={{ position: 'sticky', top: 0, backgroundColor: theme.cardBg, zIndex: 1 }}>
                         <tr>
                           {Object.keys(rawImportData[0]).map(col => (
-                            <th key={col} style={{ padding: '0.75rem', fontWeight: 600 }}>{col}</th>
+                            <th key={col} style={{ padding: '0.75rem', fontWeight: 600, borderBottom: `2px solid ${theme.accentLight}` }}>
+                              {col}
+                              {columnMapping.title === col && <span style={{ color: '#10b981', marginLeft: '0.5rem' }}>✓ Title</span>}
+                              {columnMapping.amount === col && <span style={{ color: '#10b981', marginLeft: '0.5rem' }}>✓ Amount</span>}
+                              {columnMapping.date === col && <span style={{ color: '#10b981', marginLeft: '0.5rem' }}>✓ Date</span>}
+                              {columnMapping.debitCredit === col && <span style={{ color: '#10b981', marginLeft: '0.5rem' }}>✓ DR/CR</span>}
+                              {columnMapping.note === col && <span style={{ color: '#10b981', marginLeft: '0.5rem' }}>✓ Note</span>}
+                            </th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {rawImportData.slice(0, 10).map((row, idx) => (
+                        {rawImportData.map((row, idx) => (
                           <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? theme.accentLighter : 'transparent' }}>
                             {Object.keys(rawImportData[0]).map(col => (
                               <td key={`${idx}-${col}`} style={{ padding: '0.75rem', borderBottom: `1px solid ${theme.accentLight}` }}>
@@ -2353,15 +2407,20 @@ function App() {
                       </tbody>
                     </table>
                   </div>
-                  {rawImportData.length > 10 && (
-                    <p style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: theme.textSecondary }}>
-                      ... and {rawImportData.length - 10} more row(s)
-                    </p>
-                  )}
                 </div>
 
                 {/* Action Buttons */}
                 <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => {
+                      const columns = Object.keys(rawImportData[0]);
+                      const autoMapping = autoDetectColumns(columns);
+                      setColumnMapping(autoMapping);
+                    }}
+                  >
+                    Re-detect Columns
+                  </button>
                   <button
                     className="btn btn-secondary"
                     onClick={() => setShowColumnMapping(false)}
@@ -2371,8 +2430,10 @@ function App() {
                   <button
                     className="btn btn-primary"
                     onClick={handleApplyColumnMapping}
+                    style={{ gap: '0.5rem' }}
                   >
-                    Apply Mapping
+                    <FileDown size={18} />
+                    Continue to Review
                   </button>
                 </div>
               </div>
