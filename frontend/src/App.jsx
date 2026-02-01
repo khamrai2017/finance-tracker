@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { TrendingUp, TrendingDown, Wallet, CreditCard, PieChart as PieChartIcon, Calendar, Plus, Upload, Download, Filter, Search, X } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, CreditCard, PieChart as PieChartIcon, Calendar, Plus, Upload, Download, Filter, Search, X, FileDown } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 const API_BASE = 'http://localhost:8000/api';
 
@@ -192,6 +193,22 @@ function App() {
   const [editingData, setEditingData] = useState({});
   const [copiedRowId, setCopiedRowId] = useState(null);
   const [copiedData, setCopiedData] = useState({});
+  const [importedData, setImportedData] = useState([]);
+  const [selectedImports, setSelectedImports] = useState(new Set());
+  const [editingImportId, setEditingImportId] = useState(null);
+  const [editingImportData, setEditingImportData] = useState({});
+  const [showImportConfirm, setShowImportConfirm] = useState(false);
+  const [rawImportData, setRawImportData] = useState([]);
+  const [showColumnMapping, setShowColumnMapping] = useState(false);
+  const [columnMapping, setColumnMapping] = useState({
+    title: '',
+    amount: '',
+    date: '',
+    debitCredit: '',
+    note: ''
+  });
+  const [selectedCategoryForImport, setSelectedCategoryForImport] = useState('');
+  const [selectedAccountForImport, setSelectedAccountForImport] = useState('');
   
   const theme = themes[currentTheme];
 
@@ -334,6 +351,41 @@ function App() {
     setCopiedData({});
   };
 
+  // Export transactions to Excel
+  const handleExportExcel = () => {
+    if (filteredTransactions.length === 0) {
+      alert('No transactions to export');
+      return;
+    }
+
+    const exportData = filteredTransactions.map(transaction => ({
+      'Date': formatDate(transaction.date),
+      'Title': transaction.title,
+      'Category': transaction.category_name,
+      'Account': transaction.account_name,
+      'Amount': transaction.amount,
+      'Type': transaction.is_income ? 'Income' : 'Expense',
+      'Note': transaction.note || ''
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Transactions');
+    
+    worksheet['!cols'] = [
+      { wch: 20 },
+      { wch: 20 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 12 },
+      { wch: 10 },
+      { wch: 30 }
+    ];
+    
+    const fileName = `transactions_${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(workbook, fileName);
+  };
+
   const handleSaveCopiedRow = async () => {
     try {
       const response = await fetch(`${API_BASE}/transactions`, {
@@ -363,9 +415,190 @@ function App() {
     }
   };
 
+  // Import from XLSX
+  const handleImportXLSX = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = new Uint8Array(event.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+        
+        if (jsonData.length === 0) {
+          alert('File is empty');
+          return;
+        }
+
+        // Store raw data and show mapping modal
+        setRawImportData(jsonData);
+        setShowColumnMapping(true);
+        
+        // Reset mapping
+        setColumnMapping({
+          title: '',
+          amount: '',
+          date: '',
+          debitCredit: '',
+          note: ''
+        });
+        setSelectedCategoryForImport('');
+        setSelectedAccountForImport('');
+      } catch (error) {
+        alert('Error reading file: ' + error.message);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleApplyColumnMapping = () => {
+    // Validate that required columns are mapped
+    if (!columnMapping.title || !columnMapping.amount || !selectedCategoryForImport || !selectedAccountForImport) {
+      alert('Please map all required fields: Title, Amount, and select Category & Account');
+      return;
+    }
+
+    // Helper function to parse amount - handle various formats
+    const parseAmount = (value) => {
+      if (value === null || value === undefined || value === '') return 0;
+      
+      // Convert to string and remove common currency symbols and spaces
+      let numStr = String(value)
+        .replace(/[₹$€£¥]/g, '')
+        .replace(/,/g, '')
+        .trim();
+      
+      const parsed = parseFloat(numStr);
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
+    // Helper function to determine if transaction is income or expense based on debit/credit
+    const determineIsIncome = (row) => {
+      if (columnMapping.debitCredit) {
+        const debitCreditValue = String(row[columnMapping.debitCredit] || '').toLowerCase().trim();
+        // Credit = Income, Debit = Expense
+        return debitCreditValue.includes('cr') || debitCreditValue.includes('credit');
+      }
+      return false; // Default to expense if no debit/credit column
+    };
+
+    const selectedCategory = categories.find(c => c.id === parseInt(selectedCategoryForImport));
+    const selectedAccount = accounts.find(a => a.id === parseInt(selectedAccountForImport));
+
+    // Process the data using the mapping
+    const processedData = rawImportData.map((row, index) => {
+      return {
+        id: index,
+        title: row[columnMapping.title] || '',
+        amount: parseAmount(row[columnMapping.amount]),
+        category_name: selectedCategory?.name || 'Other',
+        category_id: parseInt(selectedCategoryForImport),
+        account_name: selectedAccount?.name || '',
+        account_id: parseInt(selectedAccountForImport),
+        date: columnMapping.date ? row[columnMapping.date] : new Date().toISOString(),
+        is_income: determineIsIncome(row),
+        note: columnMapping.note ? (row[columnMapping.note] || '') : ''
+      };
+    });
+
+    setImportedData(processedData);
+    setSelectedImports(new Set(processedData.map((_, i) => i)));
+    setShowColumnMapping(false);
+    setRawImportData([]);
+  };
+
+  const handleImportCheckChange = (id) => {
+    const newSelected = new Set(selectedImports);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedImports(newSelected);
+  };
+
+  const handleSelectAllImports = () => {
+    if (selectedImports.size === importedData.length) {
+      setSelectedImports(new Set());
+    } else {
+      setSelectedImports(new Set(importedData.map((_, i) => i)));
+    }
+  };
+
+  const handleEditImportRow = (id) => {
+    setEditingImportId(id);
+    setEditingImportData({ ...importedData[id] });
+  };
+
+  const handleSaveImportEdit = () => {
+    const updated = [...importedData];
+    updated[editingImportId] = editingImportData;
+    setImportedData(updated);
+    setEditingImportId(null);
+    setEditingImportData({});
+  };
+
+  const handleCancelImportEdit = () => {
+    setEditingImportId(null);
+    setEditingImportData({});
+  };
+
+  const handleConfirmImport = async () => {
+    const selectedRecords = importedData.filter((_, i) => selectedImports.has(i));
+    
+    if (selectedRecords.length === 0) {
+      alert('Please select at least one transaction to import');
+      return;
+    }
+
+    // Validate that all required fields have IDs assigned
+    const recordsToImport = selectedRecords.map(record => {
+      if (!record.account_id) {
+        throw new Error(`Account not selected for: ${record.title}`);
+      }
+      if (!record.category_id) {
+        throw new Error(`Category not selected for: ${record.title}`);
+      }
+
+      return {
+        title: record.title,
+        amount: record.amount,
+        category_id: record.category_id,
+        account_id: record.account_id,
+        date: new Date(record.date).toISOString(),
+        is_income: record.is_income,
+        note: record.note
+      };
+    });
+
+    try {
+      for (const record of recordsToImport) {
+        await fetch(`${API_BASE}/transactions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(record)
+        });
+      }
+
+      alert(`Successfully imported ${recordsToImport.length} transactions!`);
+      setImportedData([]);
+      setSelectedImports(new Set());
+      setShowImportConfirm(false);
+      fetchTransactions();
+      fetchOverview();
+      fetchAnalytics();
+    } catch (error) {
+      alert('Import failed: ' + error.message);
+    }
+  };
+
   // Calculate total transaction amounts
   const calculateTotalAmount = (transactionList) => {
     return transactionList.reduce((sum, transaction) => {
+      if (transaction.category_name === 'Balance Correction') return sum;
       return sum + (transaction.is_income ? transaction.amount : -transaction.amount);
     }, 0);
   };
@@ -374,6 +607,7 @@ function App() {
   const calculateSumByAccount = (transactionList) => {
     const sumByAccount = {};
     transactionList.forEach(transaction => {
+      if (transaction.category_name === 'Balance Correction') return;
       if (!sumByAccount[transaction.account_name]) {
         sumByAccount[transaction.account_name] = 0;
       }
@@ -419,8 +653,6 @@ function App() {
   return (
     <div className="app">
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap');
-        
         * {
           margin: 0;
           padding: 0;
@@ -1105,6 +1337,12 @@ function App() {
             >
               <span>Analytics</span>
             </button>
+            <button 
+              className={`nav-btn ${activeTab === 'import' ? 'active' : ''}`}
+              onClick={() => setActiveTab('import')}
+            >
+              <span>Import</span>
+            </button>
           </nav>
           <div className="theme-selector">
             {Object.entries(themes).map(([key, themeData]) => (
@@ -1304,6 +1542,10 @@ function App() {
                   style={{ background: showModifyTransaction ? theme.secondary : theme.primary }}
                 >
                   ✏️ Modify Transaction
+                </button>
+                <button className="btn btn-primary" onClick={handleExportExcel}>
+                  <FileDown size={18} />
+                  Export Excel
                 </button>
               </div>
             </div>
@@ -1803,6 +2045,372 @@ function App() {
               </table>
             </div>
           </>
+        )}
+
+        {/* Import Tab */}
+        {activeTab === 'import' && (
+          <>
+            <div className="table-card">
+              <div className="table-header">
+                <h2 className="table-title">Import Transactions from Excel</h2>
+                <label className="btn btn-primary" style={{ cursor: 'pointer', margin: 0 }}>
+                  <Upload size={18} />
+                  Choose File
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls"
+                    onChange={handleImportXLSX}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+              </div>
+
+              {importedData.length > 0 && (
+                <>
+                  <div style={{ marginBottom: '1rem', display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedImports.size === importedData.length && importedData.length > 0}
+                        onChange={handleSelectAllImports}
+                      />
+                      <span>Select All ({selectedImports.size}/{importedData.length})</span>
+                    </label>
+                    <button 
+                      className="btn btn-primary"
+                      onClick={() => setShowImportConfirm(true)}
+                      disabled={selectedImports.size === 0}
+                      style={{ opacity: selectedImports.size === 0 ? 0.5 : 1, cursor: selectedImports.size === 0 ? 'not-allowed' : 'pointer' }}
+                    >
+                      <FileDown size={18} />
+                      Import Selected ({selectedImports.size})
+                    </button>
+                  </div>
+
+                  <div style={{ overflowX: 'auto' }}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style={{ width: '50px' }}>Select</th>
+                          <th>Title</th>
+                          <th>Amount</th>
+                          <th>Category</th>
+                          <th>Account</th>
+                          <th>Date</th>
+                          <th>Type</th>
+                          <th>Note</th>
+                          <th style={{ width: '100px' }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importedData.map((row, index) => (
+                          <tr key={index} style={{ opacity: selectedImports.has(index) ? 1 : 0.7 }}>
+                            <td>
+                              <input
+                                type="checkbox"
+                                checked={selectedImports.has(index)}
+                                onChange={() => handleImportCheckChange(index)}
+                              />
+                            </td>
+                            {editingImportId === index ? (
+                              <>
+                                <td>
+                                  <input
+                                    type="text"
+                                    value={editingImportData.title}
+                                    onChange={e => setEditingImportData({ ...editingImportData, title: e.target.value })}
+                                    className="form-input"
+                                    style={{ padding: '0.5rem', minWidth: '150px' }}
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={editingImportData.amount}
+                                    onChange={e => setEditingImportData({ ...editingImportData, amount: parseFloat(e.target.value) })}
+                                    className="form-input"
+                                    style={{ padding: '0.5rem', minWidth: '100px' }}
+                                  />
+                                </td>
+                                <td style={{ color: theme.textSecondary }}>
+                                  {editingImportData.category_name || row.category_name}
+                                </td>
+                                <td style={{ color: theme.textSecondary }}>
+                                  {editingImportData.account_name || row.account_name}
+                                </td>
+                                <td>
+                                  <input
+                                    type="datetime-local"
+                                    value={formatDateTimeForInput(editingImportData.date)}
+                                    onChange={e => setEditingImportData({ ...editingImportData, date: new Date(e.target.value).toISOString() })}
+                                    className="form-input"
+                                    style={{ padding: '0.5rem', minWidth: '150px' }}
+                                  />
+                                </td>
+                                <td>
+                                  <select
+                                    value={editingImportData.is_income ? 'income' : 'expense'}
+                                    onChange={e => setEditingImportData({ ...editingImportData, is_income: e.target.value === 'income' })}
+                                    className="form-select"
+                                    style={{ padding: '0.5rem', minWidth: '100px' }}
+                                  >
+                                    <option value="expense">Expense</option>
+                                    <option value="income">Income</option>
+                                  </select>
+                                </td>
+                                <td>
+                                  <input
+                                    type="text"
+                                    value={editingImportData.note}
+                                    onChange={e => setEditingImportData({ ...editingImportData, note: e.target.value })}
+                                    className="form-input"
+                                    style={{ padding: '0.5rem', minWidth: '150px' }}
+                                  />
+                                </td>
+                                <td style={{ whiteSpace: 'nowrap' }}>
+                                  <button onClick={handleSaveImportEdit} className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '0.5rem 0.75rem' }}>Save</button>
+                                  <button onClick={handleCancelImportEdit} className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.5rem 0.75rem', marginLeft: '0.5rem' }}>Cancel</button>
+                                </td>
+                              </>
+                            ) : (
+                              <>
+                                <td>{row.title}</td>
+                                <td className={row.is_income ? 'amount income' : 'amount expense'}>{formatCurrency(row.amount)}</td>
+                                <td>{row.category_name}</td>
+                                <td>{row.account_name}</td>
+                                <td>{formatDate(row.date)}</td>
+                                <td>{row.is_income ? 'Income' : 'Expense'}</td>
+                                <td>{row.note}</td>
+                                <td>
+                                  <button onClick={() => handleEditImportRow(index)} className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.5rem 0.75rem' }}>Edit</button>
+                                </td>
+                              </>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+
+              {importedData.length === 0 && (
+                <div style={{ textAlign: 'center', padding: '3rem 1rem', color: theme.textSecondary }}>
+                  <Upload size={48} style={{ marginBottom: '1rem', opacity: 0.5 }} />
+                  <p>Click "Choose File" to upload an Excel file with your transactions</p>
+                  <p style={{ fontSize: '0.9rem', marginTop: '1rem' }}>
+                    Required columns: Title, Amount | Optional: Date, Debit/Credit, Note | Select Category & Account in the mapping screen
+                  </p>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Column Mapping Modal */}
+        {showColumnMapping && rawImportData.length > 0 && (
+          <div className="modal-overlay" onClick={() => setShowColumnMapping(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '90vw', maxHeight: '90vh', overflow: 'auto' }}>
+              <div className="modal-header">
+                <h2 className="modal-title">Map Excel Columns</h2>
+                <button className="close-btn" onClick={() => setShowColumnMapping(false)}>
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div style={{ padding: '1.5rem' }}>
+                <p style={{ marginBottom: '1.5rem', color: theme.textSecondary }}>
+                  Select which column from your Excel file corresponds to each field. All transactions will use the same Category and Account. We found <strong>{Object.keys(rawImportData[0]).length}</strong> column(s).
+                </p>
+
+                {/* Mapping Controls */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
+                  <div className="form-group">
+                    <label className="form-label" style={{ color: '#ef4444' }}>Title *</label>
+                    <select
+                      className="form-select"
+                      value={columnMapping.title}
+                      onChange={e => setColumnMapping({ ...columnMapping, title: e.target.value })}
+                    >
+                      <option value="">Select column</option>
+                      {Object.keys(rawImportData[0]).map(col => (
+                        <option key={col} value={col}>{col}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label" style={{ color: '#ef4444' }}>Amount *</label>
+                    <select
+                      className="form-select"
+                      value={columnMapping.amount}
+                      onChange={e => setColumnMapping({ ...columnMapping, amount: e.target.value })}
+                    >
+                      <option value="">Select column</option>
+                      {Object.keys(rawImportData[0]).map(col => (
+                        <option key={col} value={col}>{col}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label" style={{ color: '#ef4444' }}>Category *</label>
+                    <select
+                      className="form-select"
+                      value={selectedCategoryForImport}
+                      onChange={e => setSelectedCategoryForImport(e.target.value)}
+                    >
+                      <option value="">Select category for all transactions</option>
+                      {categories.map(cat => (
+                        <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label" style={{ color: '#ef4444' }}>Account *</label>
+                    <select
+                      className="form-select"
+                      value={selectedAccountForImport}
+                      onChange={e => setSelectedAccountForImport(e.target.value)}
+                    >
+                      <option value="">Select account for all transactions</option>
+                      {accounts.map(acc => (
+                        <option key={acc.id} value={acc.id}>{acc.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Date</label>
+                    <select
+                      className="form-select"
+                      value={columnMapping.date}
+                      onChange={e => setColumnMapping({ ...columnMapping, date: e.target.value })}
+                    >
+                      <option value="">Optional - Select column</option>
+                      {Object.keys(rawImportData[0]).map(col => (
+                        <option key={col} value={col}>{col}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Debit/Credit (Automatic Income/Expense)</label>
+                    <select
+                      className="form-select"
+                      value={columnMapping.debitCredit}
+                      onChange={e => setColumnMapping({ ...columnMapping, debitCredit: e.target.value })}
+                    >
+                      <option value="">Optional - Select column</option>
+                      {Object.keys(rawImportData[0]).map(col => (
+                        <option key={col} value={col}>{col}</option>
+                      ))}
+                    </select>
+                    <small style={{ display: 'block', marginTop: '0.25rem', color: theme.textSecondary }}>
+                      Select a column with CR/DR or Credit/Debit values. Credit = Income, Debit = Expense
+                    </small>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Note</label>
+                    <select
+                      className="form-select"
+                      value={columnMapping.note}
+                      onChange={e => setColumnMapping({ ...columnMapping, note: e.target.value })}
+                    >
+                      <option value="">Optional - Select column</option>
+                      {Object.keys(rawImportData[0]).map(col => (
+                        <option key={col} value={col}>{col}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Preview Table - First 10 rows */}
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <h3 style={{ marginBottom: '1rem', fontSize: '1.1rem', fontWeight: 600 }}>Preview (First 10 rows)</h3>
+                  <div style={{ overflowX: 'auto', border: `1px solid ${theme.accentLight}`, borderRadius: '8px' }}>
+                    <table style={{ fontSize: '0.85rem' }}>
+                      <thead>
+                        <tr>
+                          {Object.keys(rawImportData[0]).map(col => (
+                            <th key={col} style={{ padding: '0.75rem', fontWeight: 600 }}>{col}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rawImportData.slice(0, 10).map((row, idx) => (
+                          <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? theme.accentLighter : 'transparent' }}>
+                            {Object.keys(rawImportData[0]).map(col => (
+                              <td key={`${idx}-${col}`} style={{ padding: '0.75rem', borderBottom: `1px solid ${theme.accentLight}` }}>
+                                {String(row[col]).substring(0, 50)}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {rawImportData.length > 10 && (
+                    <p style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: theme.textSecondary }}>
+                      ... and {rawImportData.length - 10} more row(s)
+                    </p>
+                  )}
+                </div>
+
+                {/* Action Buttons */}
+                <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setShowColumnMapping(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleApplyColumnMapping}
+                  >
+                    Apply Mapping
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Confirmation Modal for Import */}
+        {showImportConfirm && (
+          <div className="modal-overlay" onClick={() => setShowImportConfirm(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2 className="modal-title">Confirm Import</h2>
+                <button className="close-btn" onClick={() => setShowImportConfirm(false)}>
+                  <X size={24} />
+                </button>
+              </div>
+              <div style={{ padding: '1.5rem' }}>
+                <p style={{ marginBottom: '1rem', color: theme.textSecondary }}>
+                  You are about to import <strong>{selectedImports.size}</strong> transaction(s). This action cannot be undone.
+                </p>
+                <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                  <button 
+                    className="btn btn-secondary"
+                    onClick={() => setShowImportConfirm(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    className="btn btn-primary"
+                    onClick={handleConfirmImport}
+                  >
+                    Confirm Import
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
 

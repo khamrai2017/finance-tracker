@@ -15,3 +15,4 @@ htmlcov/
 pytest_cache/
 *.sqlite3
 *.iml
+input_data/
