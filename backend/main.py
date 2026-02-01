@@ -17,6 +17,8 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 # Database Models
+
+
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
@@ -27,6 +29,7 @@ class User(Base):
     categories = relationship("Category", back_populates="user")
     transactions = relationship("Transaction", back_populates="user")
     budgets = relationship("Budget", back_populates="user")
+
 
 class Account(Base):
     __tablename__ = "accounts"
@@ -41,6 +44,7 @@ class Account(Base):
     user = relationship("User", back_populates="accounts")
     transactions = relationship("Transaction", back_populates="account")
 
+
 class Category(Base):
     __tablename__ = "categories"
     id = Column(Integer, primary_key=True, index=True)
@@ -52,6 +56,7 @@ class Category(Base):
     user = relationship("User", back_populates="categories")
     transactions = relationship("Transaction", back_populates="category")
     budgets = relationship("Budget", back_populates="category")
+
 
 class Transaction(Base):
     __tablename__ = "transactions"
@@ -67,10 +72,12 @@ class Transaction(Base):
     is_income = Column(Boolean, default=False)
     merchant = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow,
+                        onupdate=datetime.utcnow)
     user = relationship("User", back_populates="transactions")
     account = relationship("Account", back_populates="transactions")
     category = relationship("Category", back_populates="transactions")
+
 
 class Budget(Base):
     __tablename__ = "budgets"
@@ -84,10 +91,13 @@ class Budget(Base):
     user = relationship("User", back_populates="budgets")
     category = relationship("Category", back_populates="budgets")
 
+
 # Create tables
 Base.metadata.create_all(bind=engine)
 
 # Pydantic Models
+
+
 class TransactionCreate(BaseModel):
     account_id: int
     category_id: int
@@ -98,6 +108,7 @@ class TransactionCreate(BaseModel):
     date: datetime
     is_income: bool = False
     merchant: Optional[str] = None
+
 
 class TransactionResponse(BaseModel):
     id: int
@@ -113,9 +124,10 @@ class TransactionResponse(BaseModel):
     account_name: Optional[str]
     category_name: Optional[str]
     category_color: Optional[str]
-    
+
     class Config:
         from_attributes = True
+
 
 class AccountCreate(BaseModel):
     name: str
@@ -123,16 +135,19 @@ class AccountCreate(BaseModel):
     balance: float = 0.0
     color: str = "#6366f1"
 
+
 class CategoryCreate(BaseModel):
     name: str
     type: str
     color: str
     icon: str = "💰"
 
+
 class BudgetCreate(BaseModel):
     category_id: int
     amount: float
     period: str = "monthly"
+
 
 # FastAPI app
 app = FastAPI(title="Finance Tracker API")
@@ -147,6 +162,8 @@ app.add_middleware(
 )
 
 # Dependency
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -155,10 +172,12 @@ def get_db():
         db.close()
 
 # Initialize default user and data
+
+
 @app.on_event("startup")
 async def startup_event():
     db = SessionLocal()
-    
+
     # Check if default user exists
     user = db.query(User).filter(User.email == "demo@finance.com").first()
     if not user:
@@ -167,7 +186,7 @@ async def startup_event():
         db.add(user)
         db.commit()
         db.refresh(user)
-        
+
         # Create default accounts
         accounts_data = [
             {"name": "Supermoney", "account_type": "wallet", "color": "#8b5cf6"},
@@ -179,43 +198,57 @@ async def startup_event():
             {"name": "IciciSapphiro", "account_type": "credit_card", "color": "#06b6d4"},
             {"name": "Kotak", "account_type": "bank", "color": "#8b5cf6"},
         ]
-        
+
         for acc_data in accounts_data:
             account = Account(user_id=user.id, **acc_data)
             db.add(account)
-        
+
         # Create default categories
         categories_data = [
-            {"name": "Shopping", "type": "expense", "color": "#ec4899", "icon": "🛍️"},
+            {"name": "Shopping", "type": "expense",
+                "color": "#ec4899", "icon": "🛍️"},
             {"name": "Home", "type": "expense", "color": "#8b5cf6", "icon": "🏠"},
-            {"name": "Education", "type": "expense", "color": "#3b82f6", "icon": "📚"},
-            {"name": "Groceries", "type": "expense", "color": "#10b981", "icon": "🛒"},
-            {"name": "Healthcare", "type": "expense", "color": "#ef4444", "icon": "🏥"},
+            {"name": "Education", "type": "expense",
+                "color": "#3b82f6", "icon": "📚"},
+            {"name": "Groceries", "type": "expense",
+                "color": "#10b981", "icon": "🛒"},
+            {"name": "Healthcare", "type": "expense",
+                "color": "#ef4444", "icon": "🏥"},
             {"name": "Food", "type": "expense", "color": "#f59e0b", "icon": "🍔"},
-            {"name": "Bills & Fees", "type": "expense", "color": "#6366f1", "icon": "📄"},
-            {"name": "Travel", "type": "expense", "color": "#06b6d4", "icon": "✈️"},
-            {"name": "Investment", "type": "expense", "color": "#14b8a6", "icon": "💹"},
+            {"name": "Bills & Fees", "type": "expense",
+                "color": "#6366f1", "icon": "📄"},
+            {"name": "Travel", "type": "expense",
+                "color": "#06b6d4", "icon": "✈️"},
+            {"name": "Investment", "type": "expense",
+                "color": "#14b8a6", "icon": "💹"},
             {"name": "Beauty", "type": "expense", "color": "#f472b6", "icon": "💄"},
-            {"name": "Dining", "type": "expense", "color": "#fb923c", "icon": "🍽️"},
-            {"name": "Entertainment", "type": "expense", "color": "#a78bfa", "icon": "🎮"},
+            {"name": "Dining", "type": "expense",
+                "color": "#fb923c", "icon": "🍽️"},
+            {"name": "Entertainment", "type": "expense",
+                "color": "#a78bfa", "icon": "🎮"},
             {"name": "Gifts", "type": "expense", "color": "#fbbf24", "icon": "🎁"},
-            {"name": "Balance Correction", "type": "income", "color": "#22c55e", "icon": "💵"},
+            {"name": "Imported", "type": "expense",
+                "color": "#9ca3af", "icon": "📥"},
+            {"name": "Balance Correction", "type": "income",
+                "color": "#22c55e", "icon": "💵"},
         ]
-        
+
         for cat_data in categories_data:
             category = Category(user_id=user.id, **cat_data)
             db.add(category)
-        
+
         db.commit()
-    
+
     db.close()
 
 # API Endpoints
 
 # Transactions
+
+
 @app.get("/api/transactions", response_model=List[TransactionResponse])
 async def get_transactions(
-    skip: int = 0, 
+    skip: int = 0,
     limit: int = 1000,
     search: Optional[str] = None,
     start_date: Optional[str] = None,
@@ -226,7 +259,7 @@ async def get_transactions(
     db: Session = Depends(get_db)
 ):
     query = db.query(Transaction).filter(Transaction.user_id == 1)
-    
+
     if search:
         query = query.filter(
             (Transaction.title.ilike(f'%{search}%')) |
@@ -234,18 +267,21 @@ async def get_transactions(
             (Transaction.merchant.ilike(f'%{search}%'))
         )
     if start_date:
-        query = query.filter(Transaction.date >= datetime.fromisoformat(start_date))
+        query = query.filter(Transaction.date >=
+                             datetime.fromisoformat(start_date))
     if end_date:
-        query = query.filter(Transaction.date <= datetime.fromisoformat(end_date))
+        query = query.filter(Transaction.date <=
+                             datetime.fromisoformat(end_date))
     if category_id:
         query = query.filter(Transaction.category_id == category_id)
     if account_id:
         query = query.filter(Transaction.account_id == account_id)
     if is_income is not None:
         query = query.filter(Transaction.is_income == is_income)
-    
-    transactions = query.order_by(Transaction.date.desc()).offset(skip).limit(limit).all()
-    
+
+    transactions = query.order_by(
+        Transaction.date.desc()).offset(skip).limit(limit).all()
+
     result = []
     for t in transactions:
         result.append(TransactionResponse(
@@ -263,8 +299,9 @@ async def get_transactions(
             category_name=t.category.name if t.category else None,
             category_color=t.category.color if t.category else None
         ))
-    
+
     return result
+
 
 @app.post("/api/transactions", response_model=TransactionResponse)
 async def create_transaction(transaction: TransactionCreate, db: Session = Depends(get_db)):
@@ -272,7 +309,7 @@ async def create_transaction(transaction: TransactionCreate, db: Session = Depen
     db.add(db_transaction)
     db.commit()
     db.refresh(db_transaction)
-    
+
     return TransactionResponse(
         id=db_transaction.id,
         account_id=db_transaction.account_id,
@@ -289,13 +326,15 @@ async def create_transaction(transaction: TransactionCreate, db: Session = Depen
         category_color=db_transaction.category.color
     )
 
+
 @app.put("/api/transactions/{transaction_id}", response_model=TransactionResponse)
 async def update_transaction(transaction_id: int, transaction: TransactionCreate, db: Session = Depends(get_db)):
-    db_transaction = db.query(Transaction).filter(Transaction.id == transaction_id, Transaction.user_id == 1).first()
-    
+    db_transaction = db.query(Transaction).filter(
+        Transaction.id == transaction_id, Transaction.user_id == 1).first()
+
     if not db_transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    
+
     db_transaction.account_id = transaction.account_id
     db_transaction.category_id = transaction.category_id
     db_transaction.amount = transaction.amount
@@ -306,10 +345,10 @@ async def update_transaction(transaction_id: int, transaction: TransactionCreate
     db_transaction.is_income = transaction.is_income
     db_transaction.merchant = transaction.merchant
     db_transaction.updated_at = datetime.utcnow()
-    
+
     db.commit()
     db.refresh(db_transaction)
-    
+
     return TransactionResponse(
         id=db_transaction.id,
         account_id=db_transaction.account_id,
@@ -325,9 +364,12 @@ async def update_transaction(transaction_id: int, transaction: TransactionCreate
         category_name=db_transaction.category.name,
         category_color=db_transaction.category.color
     )
+
+
 @app.delete("/api/transactions/{transaction_id}")
 async def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
-    transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    transaction = db.query(Transaction).filter(
+        Transaction.id == transaction_id).first()
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
     db.delete(transaction)
@@ -335,6 +377,8 @@ async def delete_transaction(transaction_id: int, db: Session = Depends(get_db))
     return {"message": "Transaction deleted"}
 
 # Accounts
+
+
 @app.get("/api/accounts")
 async def get_accounts(db: Session = Depends(get_db)):
     accounts = db.query(Account).filter(Account.user_id == 1).all()
@@ -344,7 +388,7 @@ async def get_accounts(db: Session = Depends(get_db)):
         total = db.query(func.sum(Transaction.amount)).filter(
             Transaction.account_id == account.id
         ).scalar() or 0
-        
+
         result.append({
             "id": account.id,
             "name": account.name,
@@ -355,6 +399,7 @@ async def get_accounts(db: Session = Depends(get_db)):
         })
     return result
 
+
 @app.post("/api/accounts")
 async def create_account(account: AccountCreate, db: Session = Depends(get_db)):
     db_account = Account(user_id=1, **account.dict())
@@ -364,10 +409,13 @@ async def create_account(account: AccountCreate, db: Session = Depends(get_db)):
     return db_account
 
 # Categories
+
+
 @app.get("/api/categories")
 async def get_categories(db: Session = Depends(get_db)):
     categories = db.query(Category).filter(Category.user_id == 1).all()
     return categories
+
 
 @app.post("/api/categories")
 async def create_category(category: CategoryCreate, db: Session = Depends(get_db)):
@@ -378,41 +426,43 @@ async def create_category(category: CategoryCreate, db: Session = Depends(get_db
     return db_category
 
 # Analytics
+
+
 @app.get("/api/analytics/overview")
 async def get_overview(db: Session = Depends(get_db)):
     # Get current month
     now = datetime.now()
     start_of_month = datetime(now.year, now.month, 1)
-    
+
     # Total expenses and income
     total_expenses = db.query(func.sum(Transaction.amount)).filter(
         Transaction.user_id == 1,
         Transaction.is_income == False
     ).scalar() or 0
-    
+
     total_income = db.query(func.sum(Transaction.amount)).filter(
         Transaction.user_id == 1,
         Transaction.is_income == True
     ).scalar() or 0
-    
+
     # This month
     month_expenses = db.query(func.sum(Transaction.amount)).filter(
         Transaction.user_id == 1,
         Transaction.is_income == False,
         Transaction.date >= start_of_month
     ).scalar() or 0
-    
+
     month_income = db.query(func.sum(Transaction.amount)).filter(
         Transaction.user_id == 1,
         Transaction.is_income == True,
         Transaction.date >= start_of_month
     ).scalar() or 0
-    
+
     # Transaction count
     total_transactions = db.query(func.count(Transaction.id)).filter(
         Transaction.user_id == 1
     ).scalar() or 0
-    
+
     return {
         "total_expenses": total_expenses,
         "total_income": total_income,
@@ -422,6 +472,7 @@ async def get_overview(db: Session = Depends(get_db)):
         "month_net": month_income - month_expenses,
         "total_transactions": total_transactions
     }
+
 
 @app.get("/api/analytics/category-breakdown")
 async def get_category_breakdown(db: Session = Depends(get_db)):
@@ -435,7 +486,7 @@ async def get_category_breakdown(db: Session = Depends(get_db)):
         Transaction.user_id == 1,
         Transaction.is_income == False
     ).group_by(Category.id).all()
-    
+
     return [
         {
             "name": r.name,
@@ -446,6 +497,7 @@ async def get_category_breakdown(db: Session = Depends(get_db)):
         }
         for r in results
     ]
+
 
 @app.get("/api/analytics/monthly-trend")
 async def get_monthly_trend(db: Session = Depends(get_db)):
@@ -458,7 +510,7 @@ async def get_monthly_trend(db: Session = Depends(get_db)):
         Transaction.user_id == 1,
         Transaction.is_income == False
     ).group_by('year', 'month').order_by('year', 'month').all()
-    
+
     return [
         {
             "month": f"{int(r.year)}-{int(r.month):02d}",
@@ -467,6 +519,7 @@ async def get_monthly_trend(db: Session = Depends(get_db)):
         }
         for r in results
     ]
+
 
 @app.get("/api/analytics/account-distribution")
 async def get_account_distribution(db: Session = Depends(get_db)):
@@ -479,7 +532,7 @@ async def get_account_distribution(db: Session = Depends(get_db)):
         Transaction.user_id == 1,
         Transaction.is_income == False
     ).group_by(Account.id).all()
-    
+
     return [
         {
             "name": r.name,
@@ -489,6 +542,7 @@ async def get_account_distribution(db: Session = Depends(get_db)):
         }
         for r in results
     ]
+
 
 @app.get("/api/analytics/top-merchants")
 async def get_top_merchants(limit: int = 15, db: Session = Depends(get_db)):
@@ -501,7 +555,7 @@ async def get_top_merchants(limit: int = 15, db: Session = Depends(get_db)):
         Transaction.user_id == 1,
         Transaction.is_income == False
     ).group_by(Transaction.title).order_by(func.sum(Transaction.amount).desc()).limit(limit).all()
-    
+
     return [
         {
             "merchant": r.title,
@@ -513,15 +567,17 @@ async def get_top_merchants(limit: int = 15, db: Session = Depends(get_db)):
     ]
 
 # Import CSV
+
+
 @app.post("/api/import/csv")
 async def import_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
     contents = await file.read()
     df = pd.read_csv(StringIO(contents.decode('utf-8')))
-    
+
     # Get or create accounts and categories
     account_map = {}
     category_map = {}
-    
+
     for _, row in df.iterrows():
         # Get or create account
         if row['account'] not in account_map:
@@ -530,12 +586,13 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
                 Account.name == row['account']
             ).first()
             if not account:
-                account = Account(user_id=1, name=row['account'], account_type="imported")
+                account = Account(
+                    user_id=1, name=row['account'], account_type="imported")
                 db.add(account)
                 db.commit()
                 db.refresh(account)
             account_map[row['account']] = account.id
-        
+
         # Get or create category
         if row['category name'] not in category_map:
             category = db.query(Category).filter(
@@ -545,8 +602,8 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
             if not category:
                 cat_type = "income" if row['income'] else "expense"
                 category = Category(
-                    user_id=1, 
-                    name=row['category name'], 
+                    user_id=1,
+                    name=row['category name'],
                     type=cat_type,
                     color="#6366f1",
                     icon="💰"
@@ -555,7 +612,7 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
                 db.commit()
                 db.refresh(category)
             category_map[row['category name']] = category.id
-        
+
         # Create transaction
         transaction = Transaction(
             user_id=1,
@@ -570,16 +627,18 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
             merchant=row['title']
         )
         db.add(transaction)
-    
+
     db.commit()
     return {"message": f"Imported {len(df)} transactions"}
 
 # Budgets
+
+
 @app.get("/api/budgets")
 async def get_budgets(db: Session = Depends(get_db)):
     budgets = db.query(Budget).filter(Budget.user_id == 1).all()
     result = []
-    
+
     for budget in budgets:
         # Get spending for this category in current period
         spent = db.query(func.sum(Transaction.amount)).filter(
@@ -589,7 +648,7 @@ async def get_budgets(db: Session = Depends(get_db)):
             Transaction.date >= budget.start_date,
             Transaction.date <= budget.end_date
         ).scalar() or 0
-        
+
         result.append({
             "id": budget.id,
             "category_id": budget.category_id,
@@ -603,8 +662,9 @@ async def get_budgets(db: Session = Depends(get_db)):
             "start_date": budget.start_date,
             "end_date": budget.end_date
         })
-    
+
     return result
+
 
 @app.post("/api/budgets")
 async def create_budget(budget: BudgetCreate, db: Session = Depends(get_db)):
@@ -619,7 +679,7 @@ async def create_budget(budget: BudgetCreate, db: Session = Depends(get_db)):
     else:
         start_date = now
         end_date = now + timedelta(days=365)
-    
+
     db_budget = Budget(
         user_id=1,
         category_id=budget.category_id,
