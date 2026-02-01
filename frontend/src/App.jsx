@@ -226,6 +226,7 @@ function App() {
     fetchCategories();
     fetchAnalytics();
     fetchBudgets();
+    initializeMerchantMappings();  // Initialize merchant mappings on app load
   }, [searchTerm, filterCategory, filterAccount, filterStartDate, filterEndDate]);
 
   const fetchOverview = async () => {
@@ -274,6 +275,21 @@ function App() {
     ]);
 
     setAnalytics({ categoryBreakdown, monthlyTrend, accountDistribution, topMerchants });
+  };
+
+  const initializeMerchantMappings = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/merchant-mappings/reload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Merchant mappings initialized:', data);
+      }
+    } catch (error) {
+      console.log('Note: Merchant mappings not initialized (optional feature)');
+    }
   };
 
   const fetchBudgets = async () => {
