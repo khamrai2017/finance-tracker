@@ -101,6 +101,8 @@ class MerchantMapping(Base):
     clean_title = Column(String)  # Cleaned UPI title if applicable
     mapped_title = Column(String)  # Better title from input.csv
     merchant = Column(String, nullable=True)
+    category_id = Column(Integer, ForeignKey("categories.id"),
+                         nullable=True)  # Category ID from database
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -190,33 +192,38 @@ def clean_upi_title(title: str) -> str:
     """Extract merchant name from UPI title like 'UPI/CHANDAN SARKAR/bharatpe...'"""
     if not title:
         return title
-    
+
     title_upper = title.upper()
     if title_upper.startswith('UPI/') or title_upper.startswith('UPICC/'):
         parts = title.split('/')
         if len(parts) >= 2 and parts[1]:
             return parts[1].strip()
-    
+
     return title
 
 
 def load_merchant_mappings_from_csv():
-    """Load input.csv and create merchant mapping reference"""
+    """Load input.csv and create merchant mapping reference with category"""
     try:
         csv_path = "../input_data/input.csv"
         df = pd.read_csv(csv_path)
         mappings = {}
-        
+
         for _, row in df.iterrows():
             # Create a key based on amount and title for matching
             amount = float(row['amount']) if pd.notna(row['amount']) else 0
             title = str(row['title']).strip() if pd.notna(row['title']) else ''
-            
+            category = str(row['category name']).strip() if pd.notna(
+                row.get('category name')) else None
+
             if amount > 0 and title:
                 # Store mapping by amount + cleaned title
                 key = f"{amount}_{title.lower()}"
-                mappings[key] = title
-        
+                mappings[key] = {
+                    'title': title,
+                    'category': category
+                }
+
         return mappings
     except Exception as e:
         print(f"Error loading merchant mappings: {e}")
@@ -228,35 +235,47 @@ def find_merchant_title(amount: float, statement_title: str, db: Session, user_i
     try:
         # Clean UPI title if applicable
         clean_title = clean_upi_title(statement_title)
-        
+
         # Load reference mappings from input.csv
         mappings = load_merchant_mappings_from_csv()
-        
+
         # Try to find exact match with amount and clean title
         search_key = f"{amount}_{clean_title.lower()}"
         if search_key in mappings:
-            mapped_title = mappings[search_key]
-            
+            mapping_data = mappings[search_key]
+            mapped_title = mapping_data['title']
+            category_name = mapping_data.get('category')
+
+            # Look up category_id from name
+            category_id = None
+            if category_name:
+                category = db.query(Category).filter(
+                    Category.name.ilike(category_name)
+                ).first()
+                if category:
+                    category_id = category.id
+
             # Save the mapping to database
             existing = db.query(MerchantMapping).filter(
                 MerchantMapping.user_id == user_id,
                 MerchantMapping.amount == amount,
                 MerchantMapping.statement_title == statement_title
             ).first()
-            
+
             if not existing:
                 merchant_map = MerchantMapping(
                     user_id=user_id,
                     amount=amount,
                     statement_title=statement_title,
                     clean_title=clean_title,
-                    mapped_title=mapped_title
+                    mapped_title=mapped_title,
+                    category_id=category_id
                 )
                 db.add(merchant_map)
                 db.commit()
-            
+
             return mapped_title
-        
+
         # Fallback: return statement title as is
         return statement_title
     except Exception as e:
@@ -398,11 +417,12 @@ async def get_transactions(
 @app.post("/api/transactions", response_model=TransactionResponse)
 async def create_transaction(transaction: TransactionCreate, db: Session = Depends(get_db)):
     # Find better title from merchant mappings
-    better_title = find_merchant_title(transaction.amount, transaction.title, db, user_id=1)
-    
+    better_title = find_merchant_title(
+        transaction.amount, transaction.title, db, user_id=1)
+
     transaction_data = transaction.dict()
     transaction_data['title'] = better_title  # Use the mapped title
-    
+
     db_transaction = Transaction(user_id=1, **transaction_data)
     db.add(db_transaction)
     db.commit()
@@ -480,17 +500,71 @@ async def delete_transaction(transaction_id: int, db: Session = Depends(get_db))
 @app.get("/api/merchant-mappings")
 async def get_merchant_mappings(db: Session = Depends(get_db)):
     """Get all merchant mappings for the user"""
-    mappings = db.query(MerchantMapping).filter(MerchantMapping.user_id == 1).all()
+    mappings = db.query(MerchantMapping).filter(
+        MerchantMapping.user_id == 1).all()
     return mappings
 
 
 @app.post("/api/merchant-mappings/reload")
 async def reload_merchant_mappings(db: Session = Depends(get_db)):
-    """Reload merchant mappings from input.csv"""
+    """Reload merchant mappings from input.csv and save to database"""
     try:
         mappings = load_merchant_mappings_from_csv()
-        return {"status": "success", "count": len(mappings), "message": f"Loaded {len(mappings)} merchant mappings"}
+        saved_count = 0
+
+        for key, data in mappings.items():
+            # key is f"{amount}_{title.lower()}"
+            amount = float(key.split('_')[0])
+            # In our current load_merchant_mappings_from_csv, title is the mapped title
+            statement_title = data['title']
+            # Actually, statement_title should be the one we are matching against.
+            # But the CSV has 'title' which is the mapped title.
+            # This is a bit ambiguous in the current implementation.
+
+            # For now, let's just make sure the reload endpoint actually does something useful.
+            # If the user wants to see them in the table, they need to be in the database.
+
+            # Let's check if we have enough info to save
+            if not data.get('title'):
+                continue
+
+            # We don't have the original statement title in the CSV usually,
+            # unless we assume the CSV 'title' is both or we have another column.
+            # In find_merchant_title, it uses f"{amount}_{clean_title.lower()}" as search key.
+            # So the CSV 'title' is likely the Cleaned Title.
+
+            existing = db.query(MerchantMapping).filter(
+                MerchantMapping.user_id == 1,
+                MerchantMapping.amount == amount,
+                MerchantMapping.mapped_title == data['title']
+            ).first()
+
+            if not existing:
+                # Look up category_id
+                category_id = None
+                if data.get('category'):
+                    cat = db.query(Category).filter(
+                        Category.name.ilike(data.get('category'))
+                    ).first()
+                    if cat:
+                        category_id = cat.id
+
+                merchant_map = MerchantMapping(
+                    user_id=1,
+                    amount=amount,
+                    statement_title=data['title'],  # Fallback
+                    clean_title=data['title'].lower(),
+                    mapped_title=data['title'],
+                    category_id=category_id
+                )
+                db.add(merchant_map)
+                saved_count += 1
+
+        db.commit()
+        return {"status": "success", "count": saved_count, "total_loaded": len(mappings), "message": f"Saved {saved_count} new merchant mappings from input.csv"}
     except Exception as e:
+        db.rollback()
+        print(f"Error reloading merchant mappings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -499,17 +573,20 @@ async def add_merchant_mapping(
     amount: float,
     statement_title: str,
     mapped_title: str,
+    category_name: Optional[str] = None,
+    category_id: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
     """Manually add a merchant mapping"""
     clean_title = clean_upi_title(statement_title)
-    
+
     merchant_map = MerchantMapping(
         user_id=1,
         amount=amount,
         statement_title=statement_title,
         clean_title=clean_title,
-        mapped_title=mapped_title
+        mapped_title=mapped_title,
+        category_id=category_id
     )
     db.add(merchant_map)
     db.commit()

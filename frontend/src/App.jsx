@@ -210,10 +210,25 @@ function App() {
   const [selectedCategoryForImport, setSelectedCategoryForImport] = useState('');
   const [selectedAccountForImport, setSelectedAccountForImport] = useState('');
   const [notification, setNotification] = useState(null);
+  const [merchantMappings, setMerchantMappings] = useState([]);
 
   const showNotification = (message, type = 'error') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 4000);
+  };
+
+  const fetchMerchantMappings = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/merchant-mappings`);
+      if (response.ok) {
+        const data = await response.json();
+        setMerchantMappings(data);
+        return data;
+      }
+    } catch (error) {
+      console.error('Error fetching merchant mappings:', error);
+    }
+    return [];
   };
 
   const theme = themes[currentTheme];
@@ -451,7 +466,7 @@ function App() {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const data = new Uint8Array(event.target.result);
         const workbook = XLSX.read(data, { type: 'array' });
@@ -462,6 +477,9 @@ function App() {
           showNotification('File is empty', 'error');
           return;
         }
+
+        // Fetch merchant mappings for preview
+        await fetchMerchantMappings();
 
         // Auto-detect column mapping based on header names
         const columns = Object.keys(jsonData[0]);
@@ -530,13 +548,13 @@ function App() {
     return mapping;
   };
 
-  const handleApplyColumnMapping = () => {
+  const handleApplyColumnMapping = async () => {
     // Use selected category (now required)
     const importedCategoryId = selectedCategoryForImport;
 
     // Validate that required columns are mapped
-    if (!columnMapping.title || !columnMapping.amount || !selectedAccountForImport || !selectedCategoryForImport) {
-      showNotification('Please map all required fields: Title, Amount, select Category, and select Account', 'error');
+    if (!columnMapping.title || !columnMapping.amount || !selectedAccountForImport) {
+      showNotification('Please map all required fields: Title, Amount, and select Account', 'error');
       return;
     }
 
@@ -581,20 +599,83 @@ function App() {
       return title;
     };
 
-    const selectedCategory = categories.find(c => c.id === parseInt(importedCategoryId));
+    // Helper function to find better title and category from merchant mappings
+    const findMerchantMapping = async (amount, statementTitle) => {
+      try {
+        // Query the merchant mappings from backend
+        const response = await fetch(`${API_BASE}/merchant-mappings`);
+        if (!response.ok) {
+          return { title: cleanUpiTitle(statementTitle), category: null };
+        }
+
+        const mappings = await response.json();
+
+        // Clean the statement title first
+        const cleanedTitle = cleanUpiTitle(statementTitle);
+
+        // Try to find a matching mapping based on amount and cleaned title
+        const match = mappings.find(m =>
+          Math.abs(m.amount - amount) < 0.01 && // Allow small floating point differences
+          (m.statement_title === statementTitle || m.clean_title === cleanedTitle)
+        );
+
+        if (match) {
+          return {
+            title: match.mapped_title || cleanedTitle,
+            category_id: match.category_id || null
+          };
+        }
+
+        // If no match found, return the cleaned title and no category
+        return {
+          title: cleanedTitle,
+          category_id: null
+        };
+      } catch (error) {
+        console.error('Error fetching merchant mappings:', error);
+        return { title: cleanUpiTitle(statementTitle), category: null };
+      }
+    };
+
     const selectedAccount = accounts.find(a => a.id === parseInt(selectedAccountForImport));
 
-    // Process the data using the mapping
-    const processedData = rawImportData.map((row, index) => {
+    // Show loading notification
+    showNotification('Applying merchant mappings...', 'info');
+
+    // Process the data using the mapping with merchant title lookup
+    const processedDataPromises = rawImportData.map(async (row, index) => {
       const rawTitle = row[columnMapping.title] || '';
-      const cleanedTitle = cleanUpiTitle(rawTitle);
+      const amount = parseAmount(row[columnMapping.amount]);
+
+      // Get better title and category from merchant mappings
+      const mapping = await findMerchantMapping(amount, rawTitle);
+
+      // Try to find category ID if category name exists
+      // Use mapped category_id if available
+      let matchedCategoryId = mapping.category_id;
+      let matchedCategoryName = '';
+
+      if (matchedCategoryId) {
+        const cat = categories.find(c => c.id === matchedCategoryId);
+        if (cat) {
+          matchedCategoryName = cat.name;
+        }
+      } else if (selectedCategoryForImport) {
+        // Fallback to selected category if specified and mapping didn't find one
+        const cat = categories.find(c => c.id === parseInt(selectedCategoryForImport));
+        if (cat) {
+          matchedCategoryId = cat.id;
+          matchedCategoryName = cat.name;
+        }
+      }
 
       return {
         id: index,
-        title: cleanedTitle,
-        amount: parseAmount(row[columnMapping.amount]),
-        category_name: selectedCategory?.name || 'Imported',
-        category_id: parseInt(importedCategoryId),
+        title: mapping.title,
+        original_title: rawTitle, // Added for comparison as requested
+        amount: amount,
+        category_name: matchedCategoryName,
+        category_id: matchedCategoryId,
         account_name: selectedAccount?.name || '',
         account_id: parseInt(selectedAccountForImport),
         date: columnMapping.date ? row[columnMapping.date] : new Date().toISOString(),
@@ -603,10 +684,16 @@ function App() {
       };
     });
 
-    setImportedData(processedData);
-    setSelectedImports(new Set(processedData.map((_, i) => i)));
-    setShowColumnMapping(false);
-    setRawImportData([]);
+    try {
+      const processedData = await Promise.all(processedDataPromises);
+      setImportedData(processedData);
+      setSelectedImports(new Set(processedData.map((_, i) => i)));
+      setShowColumnMapping(false);
+      setRawImportData([]);
+      showNotification('Merchant mappings applied successfully!', 'success');
+    } catch (error) {
+      showNotification('Error applying merchant mappings: ' + error.message, 'error');
+    }
   };
 
   const handleImportCheckChange = (id) => {
@@ -1426,9 +1513,9 @@ function App() {
           right: '2rem',
           padding: '1rem 1.5rem',
           borderRadius: '8px',
-          backgroundColor: notification.type === 'error' ? '#fee2e2' : '#dcfce7',
-          color: notification.type === 'error' ? '#991b1b' : '#166534',
-          border: `2px solid ${notification.type === 'error' ? '#fca5a5' : '#86efac'}`,
+          backgroundColor: notification.type === 'error' ? '#fee2e2' : notification.type === 'info' ? '#dbeafe' : '#dcfce7',
+          color: notification.type === 'error' ? '#991b1b' : notification.type === 'info' ? '#1e40af' : '#166534',
+          border: `2px solid ${notification.type === 'error' ? '#fca5a5' : notification.type === 'info' ? '#93c5fd' : '#86efac'}`,
           boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
           zIndex: 10000,
           animation: 'slideIn 0.3s ease-out',
@@ -2259,7 +2346,8 @@ function App() {
                             boxShadow: '0 4px 6px rgba(0,0,0,0.2)'
                           }}>
                             <tr>
-                              <th style={{ padding: '1rem 0.75rem', fontWeight: 700, color: '#ffffff', borderBottom: '2px solid rgba(255,255,255,0.3)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Title</th>
+                              <th style={{ padding: '1rem 0.75rem', fontWeight: 700, color: '#ffffff', borderBottom: '2px solid rgba(255,255,255,0.3)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Original Title</th>
+                              <th style={{ padding: '1rem 0.75rem', fontWeight: 700, color: '#ffffff', borderBottom: '2px solid rgba(255,255,255,0.3)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Mapped Title</th>
                               <th style={{ padding: '1rem 0.75rem', fontWeight: 700, color: '#ffffff', borderBottom: '2px solid rgba(255,255,255,0.3)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Amount</th>
                               <th style={{ padding: '1rem 0.75rem', fontWeight: 700, color: '#ffffff', borderBottom: '2px solid rgba(255,255,255,0.3)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Category</th>
                               <th style={{ padding: '1rem 0.75rem', fontWeight: 700, color: '#ffffff', borderBottom: '2px solid rgba(255,255,255,0.3)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Account</th>
@@ -2287,20 +2375,7 @@ function App() {
                                 return false;
                               };
 
-                              // Get selected category and account
-                              let importedCategoryId = selectedCategoryForImport;
-                              let selectedCategory = null;
-
-                              if (!importedCategoryId) {
-                                // Try to find "Imported" category
-                                const importedCategory = categories.find(c => c.name.toLowerCase() === 'imported');
-                                if (importedCategory) {
-                                  importedCategoryId = importedCategory.id;
-                                  selectedCategory = importedCategory;
-                                }
-                              } else {
-                                selectedCategory = categories.find(c => c.id === parseInt(importedCategoryId));
-                              }
+                              // Get selected account
                               const selectedAccount = accounts.find(a => a.id === parseInt(selectedAccountForImport));
 
                               // Helper function to clean UPI titles
@@ -2320,10 +2395,45 @@ function App() {
                                 return title;
                               };
 
+                              // Helper function to find better title and category from merchant mappings
+                              const findMerchantMapping = (amount, statementTitle) => {
+                                const cleanedTitle = cleanUpiTitle(statementTitle);
+
+                                // Try to find a matching mapping based on amount and cleaned title
+                                const match = merchantMappings.find(m =>
+                                  Math.abs(m.amount - amount) < 0.01 && // Allow small floating point differences
+                                  (m.statement_title === statementTitle || m.clean_title === cleanedTitle)
+                                );
+
+                                if (match) {
+                                  return {
+                                    title: match.mapped_title || cleanedTitle,
+                                    category: match.category_name || null
+                                  };
+                                }
+
+                                // If no match found, return the cleaned title and no category
+                                return {
+                                  title: cleanedTitle,
+                                  category: null
+                                };
+                              };
+
                               const rawTitle = columnMapping.title ? (row[columnMapping.title] || '') : '';
-                              const title = cleanUpiTitle(rawTitle);
                               const amount = columnMapping.amount ? parseAmount(row[columnMapping.amount]) : 0;
-                              const categoryName = selectedCategory?.name || 'Imported';
+
+                              // Apply merchant mapping to get better title and category
+                              const mapping = findMerchantMapping(amount, rawTitle);
+                              const mappedTitle = mapping.title;
+                              const mappedCategoryName = mapping.category;
+
+                              // Find category by name from mappings, or leave blank
+                              let selectedCategory = null;
+                              if (mappedCategoryName) {
+                                selectedCategory = categories.find(c => c.name.toLowerCase() === mappedCategoryName.toLowerCase());
+                              }
+
+                              const categoryName = selectedCategory?.name || '';
                               const accountName = selectedAccount?.name || '(Select Account)';
                               const date = columnMapping.date ? row[columnMapping.date] : new Date().toISOString();
                               const isIncome = determineIsIncome(row);
@@ -2331,23 +2441,30 @@ function App() {
 
                               return (
                                 <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? 'rgba(255,255,255,0.5)' : 'transparent' }}>
+                                  <td style={{ padding: '0.75rem', borderBottom: `1px solid ${theme.accentLight}`, fontSize: '0.8rem', color: theme.textSecondary, fontStyle: 'italic' }}>
+                                    {rawTitle || <span style={{ color: '#ef4444' }}>(Missing)</span>}
+                                  </td>
                                   <td style={{ padding: '0.75rem', borderBottom: `1px solid ${theme.accentLight}`, fontWeight: 600 }}>
-                                    {title || <span style={{ color: '#ef4444' }}>(Missing)</span>}
+                                    {mappedTitle || <span style={{ color: '#ef4444' }}>(Missing)</span>}
                                   </td>
                                   <td style={{ padding: '0.75rem', borderBottom: `1px solid ${theme.accentLight}`, fontWeight: 600, color: isIncome ? '#10b981' : '#ef4444' }}>
                                     {amount > 0 ? formatCurrency(amount) : <span style={{ color: '#ef4444' }}>(Missing)</span>}
                                   </td>
                                   <td style={{ padding: '0.75rem', borderBottom: `1px solid ${theme.accentLight}` }}>
-                                    <span style={{
-                                      padding: '0.25rem 0.5rem',
-                                      borderRadius: '4px',
-                                      background: selectedCategory?.color ? `${selectedCategory.color}20` : '#9ca3af20',
-                                      color: selectedCategory?.color || '#6b7280',
-                                      fontSize: '0.8rem',
-                                      fontWeight: 600
-                                    }}>
-                                      {selectedCategory?.icon || '📥'} {categoryName}
-                                    </span>
+                                    {categoryName ? (
+                                      <span style={{
+                                        padding: '0.25rem 0.5rem',
+                                        borderRadius: '4px',
+                                        background: selectedCategory?.color ? `${selectedCategory.color}20` : '#9ca3af20',
+                                        color: selectedCategory?.color || '#6b7280',
+                                        fontSize: '0.8rem',
+                                        fontWeight: 600
+                                      }}>
+                                        {selectedCategory?.icon || '📥'} {categoryName}
+                                      </span>
+                                    ) : (
+                                      <span style={{ color: '#f59e0b', fontSize: '0.8rem', fontWeight: 600 }}>⚠️ Select Category</span>
+                                    )}
                                   </td>
                                   <td style={{ padding: '0.75rem', borderBottom: `1px solid ${theme.accentLight}` }}>
                                     {accountName}
@@ -2379,6 +2496,12 @@ function App() {
                       </div>
                       <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: theme.textSecondary, fontStyle: 'italic' }}>
                         💡 This preview shows how your data will appear after mapping. Total rows to import: {rawImportData.length}
+                      </p>
+                      <p style={{ marginTop: '0.25rem', fontSize: '0.85rem', color: '#10b981', fontWeight: 600 }}>
+                        ✅ Merchant mappings from the database have been applied to show better titles and categories where available.
+                      </p>
+                      <p style={{ marginTop: '0.25rem', fontSize: '0.85rem', color: '#f59e0b', fontWeight: 600 }}>
+                        ⚠️ Rows marked "Select Category" require you to choose a category before importing.
                       </p>
                     </div>
                   )}
@@ -2427,6 +2550,7 @@ function App() {
                         <thead>
                           <tr>
                             <th style={{ width: '50px' }}>Select</th>
+                            <th>Original Title</th>
                             <th>Title</th>
                             <th>Amount</th>
                             <th>Category</th>
@@ -2449,6 +2573,9 @@ function App() {
                               </td>
                               {editingImportId === index ? (
                                 <>
+                                  <td style={{ fontSize: '0.75rem', color: theme.textSecondary, fontStyle: 'italic' }}>
+                                    {row.original_title || '-'}
+                                  </td>
                                   <td>
                                     <input
                                       type="text"
@@ -2468,8 +2595,25 @@ function App() {
                                       style={{ padding: '0.5rem', minWidth: '100px' }}
                                     />
                                   </td>
-                                  <td style={{ color: theme.textSecondary }}>
-                                    {editingImportData.category_name || row.category_name}
+                                  <td>
+                                    <select
+                                      value={editingImportData.category_id || ''}
+                                      onChange={e => {
+                                        const cat = categories.find(c => c.id === parseInt(e.target.value));
+                                        setEditingImportData({
+                                          ...editingImportData,
+                                          category_id: cat?.id || null,
+                                          category_name: cat?.name || ''
+                                        });
+                                      }}
+                                      className="form-select"
+                                      style={{ padding: '0.5rem', minWidth: '150px' }}
+                                    >
+                                      <option value="">-- Select Category --</option>
+                                      {categories.map(cat => (
+                                        <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
+                                      ))}
+                                    </select>
                                   </td>
                                   <td style={{ color: theme.textSecondary }}>
                                     {editingImportData.account_name || row.account_name}
@@ -2510,10 +2654,31 @@ function App() {
                                 </>
                               ) : (
                                 <>
-                                  <td>{row.title}</td>
+                                  <td style={{ fontSize: '0.75rem', color: theme.textSecondary, fontStyle: 'italic' }}>
+                                    {row.original_title || '-'}
+                                  </td>
+                                  <td style={{ fontWeight: 600 }}>{row.title}</td>
                                   <td className={row.is_income ? 'amount income' : 'amount expense'}>{formatCurrency(row.amount)}</td>
-                                  <td>{row.category_name}</td>
-                                  <td>{row.account_name}</td>
+                                  <td>
+                                    {row.category_name ? (
+                                      <span style={{
+                                        padding: '0.25rem 0.5rem',
+                                        borderRadius: '4px',
+                                        background: categories.find(c => c.id === row.category_id)?.color + '20' || '#9ca3af20',
+                                        color: categories.find(c => c.id === row.category_id)?.color || '#6b7280',
+                                        fontSize: '0.8rem',
+                                        fontWeight: 600
+                                      }}>
+                                        {categories.find(c => c.id === row.category_id)?.icon || '📥'} {row.category_name}
+                                      </span>
+                                    ) : (
+                                      <span style={{ color: '#f59e0b', fontSize: '0.86rem', fontWeight: 700 }}>⚠️ Select Cat</span>
+                                    )}
+                                  </td>
+                                  <td>
+                                    {row.account_name}
+                                    {!row.account_id && <span style={{ color: '#ef4444', marginLeft: '0.5rem' }}>(Req)</span>}
+                                  </td>
                                   <td>{formatDate(row.date)}</td>
                                   <td>{row.is_income ? 'Income' : 'Expense'}</td>
                                   <td>{row.note}</td>
@@ -2556,167 +2721,167 @@ function App() {
               </div>
 
               <div>
-              <p style={{ marginBottom: '1.5rem', color: theme.textSecondary }}>
-                Columns have been automatically detected based on headers. You can modify the mapping below. All transactions will use the same Category and Account. We found <strong>{Object.keys(rawImportData[0]).length}</strong> column(s).
-              </p>
+                <p style={{ marginBottom: '1.5rem', color: theme.textSecondary }}>
+                  Columns have been automatically detected based on headers. You can modify the mapping below. All transactions will use the same Account. Merchant titles and Categories will be automatically applied from your database mappings. We found <strong>{Object.keys(rawImportData[0]).length}</strong> column(s).
+                </p>
 
-              {/* Auto-detect Success Indicator */}
-              {(columnMapping.title || columnMapping.amount) && (
-                <div style={{
-                  padding: '1rem',
-                  marginBottom: '1.5rem',
-                  backgroundColor: '#ecfdf5',
-                  border: `2px solid #10b981`,
-                  borderRadius: '8px',
-                  color: '#047857',
-                  fontSize: '0.9rem',
-                  fontWeight: '500'
-                }}>
-                  ✓ Auto-detected: {[columnMapping.title && 'Title', columnMapping.amount && 'Amount', columnMapping.date && 'Date', columnMapping.debitCredit && 'Debit/Credit', columnMapping.note && 'Note'].filter(Boolean).join(', ')}
+                {/* Auto-detect Success Indicator */}
+                {(columnMapping.title || columnMapping.amount) && (
+                  <div style={{
+                    padding: '1rem',
+                    marginBottom: '1.5rem',
+                    backgroundColor: '#ecfdf5',
+                    border: `2px solid #10b981`,
+                    borderRadius: '8px',
+                    color: '#047857',
+                    fontSize: '0.9rem',
+                    fontWeight: '500'
+                  }}>
+                    ✓ Auto-detected: {[columnMapping.title && 'Title', columnMapping.amount && 'Amount', columnMapping.date && 'Date', columnMapping.debitCredit && 'Debit/Credit', columnMapping.note && 'Note'].filter(Boolean).join(', ')}
+                  </div>
+                )}
+
+                {/* Mapping Controls Only - No Grids */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
+                  <div className="form-group">
+                    <label className="form-label" style={{ color: columnMapping.title ? '#10b981' : '#ef4444' }}>
+                      Title * {columnMapping.title && '(Auto-detected)'}
+                    </label>
+                    <select
+                      className="form-select"
+                      value={columnMapping.title}
+                      onChange={e => setColumnMapping({ ...columnMapping, title: e.target.value })}
+                    >
+                      <option value="">Select column</option>
+                      {Object.keys(rawImportData[0]).map(col => (
+                        <option key={col} value={col}>{col}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label" style={{ color: columnMapping.amount ? '#10b981' : '#ef4444' }}>
+                      Amount * {columnMapping.amount && '(Auto-detected)'}
+                    </label>
+                    <select
+                      className="form-select"
+                      value={columnMapping.amount}
+                      onChange={e => setColumnMapping({ ...columnMapping, amount: e.target.value })}
+                    >
+                      <option value="">Select column</option>
+                      {Object.keys(rawImportData[0]).map(col => (
+                        <option key={col} value={col}>{col}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label" style={{ color: selectedCategoryForImport ? '#10b981' : theme.textSecondary }}>
+                      Category (Fallback) {selectedCategoryForImport && '(Selected)'}
+                    </label>
+                    <select
+                      className="form-select"
+                      value={selectedCategoryForImport}
+                      onChange={e => setSelectedCategoryForImport(e.target.value)}
+                    >
+                      <option value="">Select category</option>
+                      {categories.map(cat => (
+                        <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label" style={{ color: selectedAccountForImport ? '#10b981' : '#ef4444' }}>
+                      Account * {selectedAccountForImport && '(Selected)'}
+                    </label>
+                    <select
+                      className="form-select"
+                      value={selectedAccountForImport}
+                      onChange={e => setSelectedAccountForImport(e.target.value)}
+                    >
+                      <option value="">Select account for all transactions</option>
+                      {accounts.map(acc => (
+                        <option key={acc.id} value={acc.id}>{acc.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label" style={{ color: columnMapping.date ? '#10b981' : theme.textSecondary }}>
+                      Date {columnMapping.date && '(Auto-detected)'}
+                    </label>
+                    <select
+                      className="form-select"
+                      value={columnMapping.date}
+                      onChange={e => setColumnMapping({ ...columnMapping, date: e.target.value })}
+                    >
+                      <option value="">Optional - Select column</option>
+                      {Object.keys(rawImportData[0]).map(col => (
+                        <option key={col} value={col}>{col}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Debit/Credit (Automatic Income/Expense)</label>
+                    <select
+                      className="form-select"
+                      value={columnMapping.debitCredit}
+                      onChange={e => setColumnMapping({ ...columnMapping, debitCredit: e.target.value })}
+                    >
+                      <option value="">Optional - Select column</option>
+                      {Object.keys(rawImportData[0]).map(col => (
+                        <option key={col} value={col}>{col}</option>
+                      ))}
+                    </select>
+                    <small style={{ display: 'block', marginTop: '0.25rem', color: theme.textSecondary }}>
+                      Select a column with CR/DR or Credit/Debit values. Credit = Income, Debit = Expense
+                    </small>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Note</label>
+                    <select
+                      className="form-select"
+                      value={columnMapping.note}
+                      onChange={e => setColumnMapping({ ...columnMapping, note: e.target.value })}
+                    >
+                      <option value="">Optional - Select column</option>
+                      {Object.keys(rawImportData[0]).map(col => (
+                        <option key={col} value={col}>{col}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-              )}
 
-              {/* Mapping Controls Only - No Grids */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
-                <div className="form-group">
-                  <label className="form-label" style={{ color: columnMapping.title ? '#10b981' : '#ef4444' }}>
-                    Title * {columnMapping.title && '(Auto-detected)'}
-                  </label>
-                  <select
-                    className="form-select"
-                    value={columnMapping.title}
-                    onChange={e => setColumnMapping({ ...columnMapping, title: e.target.value })}
+                {/* Action Buttons */}
+                <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => {
+                      const columns = Object.keys(rawImportData[0]);
+                      const autoMapping = autoDetectColumns(columns);
+                      setColumnMapping(autoMapping);
+                    }}
                   >
-                    <option value="">Select column</option>
-                    {Object.keys(rawImportData[0]).map(col => (
-                      <option key={col} value={col}>{col}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label" style={{ color: columnMapping.amount ? '#10b981' : '#ef4444' }}>
-                    Amount * {columnMapping.amount && '(Auto-detected)'}
-                  </label>
-                  <select
-                    className="form-select"
-                    value={columnMapping.amount}
-                    onChange={e => setColumnMapping({ ...columnMapping, amount: e.target.value })}
+                    Re-detect Columns
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setShowColumnMapping(false)}
                   >
-                    <option value="">Select column</option>
-                    {Object.keys(rawImportData[0]).map(col => (
-                      <option key={col} value={col}>{col}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label" style={{ color: selectedCategoryForImport ? '#10b981' : '#ef4444' }}>
-                    Category * {selectedCategoryForImport && '(Selected)'}
-                  </label>
-                  <select
-                    className="form-select"
-                    value={selectedCategoryForImport}
-                    onChange={e => setSelectedCategoryForImport(e.target.value)}
+                    Cancel
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleApplyColumnMapping}
+                    style={{ gap: '0.5rem' }}
                   >
-                    <option value="">Select category</option>
-                    {categories.map(cat => (
-                      <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
-                    ))}
-                  </select>
+                    <FileDown size={18} />
+                    Continue to Review
+                  </button>
                 </div>
-
-                <div className="form-group">
-                  <label className="form-label" style={{ color: selectedAccountForImport ? '#10b981' : '#ef4444' }}>
-                    Account * {selectedAccountForImport && '(Selected)'}
-                  </label>
-                  <select
-                    className="form-select"
-                    value={selectedAccountForImport}
-                    onChange={e => setSelectedAccountForImport(e.target.value)}
-                  >
-                    <option value="">Select account for all transactions</option>
-                    {accounts.map(acc => (
-                      <option key={acc.id} value={acc.id}>{acc.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label" style={{ color: columnMapping.date ? '#10b981' : theme.textSecondary }}>
-                    Date {columnMapping.date && '(Auto-detected)'}
-                  </label>
-                  <select
-                    className="form-select"
-                    value={columnMapping.date}
-                    onChange={e => setColumnMapping({ ...columnMapping, date: e.target.value })}
-                  >
-                    <option value="">Optional - Select column</option>
-                    {Object.keys(rawImportData[0]).map(col => (
-                      <option key={col} value={col}>{col}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Debit/Credit (Automatic Income/Expense)</label>
-                  <select
-                    className="form-select"
-                    value={columnMapping.debitCredit}
-                    onChange={e => setColumnMapping({ ...columnMapping, debitCredit: e.target.value })}
-                  >
-                    <option value="">Optional - Select column</option>
-                    {Object.keys(rawImportData[0]).map(col => (
-                      <option key={col} value={col}>{col}</option>
-                    ))}
-                  </select>
-                  <small style={{ display: 'block', marginTop: '0.25rem', color: theme.textSecondary }}>
-                    Select a column with CR/DR or Credit/Debit values. Credit = Income, Debit = Expense
-                  </small>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Note</label>
-                  <select
-                    className="form-select"
-                    value={columnMapping.note}
-                    onChange={e => setColumnMapping({ ...columnMapping, note: e.target.value })}
-                  >
-                    <option value="">Optional - Select column</option>
-                    {Object.keys(rawImportData[0]).map(col => (
-                      <option key={col} value={col}>{col}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    const columns = Object.keys(rawImportData[0]);
-                    const autoMapping = autoDetectColumns(columns);
-                    setColumnMapping(autoMapping);
-                  }}
-                >
-                  Re-detect Columns
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => setShowColumnMapping(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="btn btn-primary"
-                  onClick={handleApplyColumnMapping}
-                  style={{ gap: '0.5rem' }}
-                >
-                  <FileDown size={18} />
-                  Continue to Review
-                </button>
-              </div>
               </div>
             </div>
           </div>
