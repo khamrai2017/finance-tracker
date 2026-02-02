@@ -600,41 +600,48 @@ function App() {
     };
 
     // Helper function to find better title and category from merchant mappings
-    const findMerchantMapping = async (amount, statementTitle) => {
-      try {
-        // Query the merchant mappings from backend
-        const response = await fetch(`${API_BASE}/merchant-mappings`);
-        if (!response.ok) {
-          return { title: cleanUpiTitle(statementTitle), category: null };
-        }
+    const findMerchantMapping = (mappings, amount, statementTitle) => {
+      // Clean the statement title first
+      const cleanedTitle = cleanUpiTitle(statementTitle);
 
-        const mappings = await response.json();
+      // Strategy 1: Exact Match (Amount + Title) - Best for recurring subscriptions or specific items
+      let match = mappings.find(m =>
+        Math.abs(m.amount - amount) < 0.01 && // Allow small floating point differences
+        (
+          m.statement_title === statementTitle ||
+          m.clean_title === cleanedTitle ||
+          (m.mapped_title && m.mapped_title.toLowerCase() === cleanedTitle.toLowerCase())
+        )
+      );
 
-        // Clean the statement title first
-        const cleanedTitle = cleanUpiTitle(statementTitle);
-
-        // Try to find a matching mapping based on amount and cleaned title
-        const match = mappings.find(m =>
-          Math.abs(m.amount - amount) < 0.01 && // Allow small floating point differences
-          (m.statement_title === statementTitle || m.clean_title === cleanedTitle)
-        );
-
-        if (match) {
-          return {
-            title: match.mapped_title || cleanedTitle,
-            category_id: match.category_id || null
-          };
-        }
-
-        // If no match found, return the cleaned title and no category
+      if (match) {
         return {
-          title: cleanedTitle,
-          category_id: null
+          title: match.mapped_title || cleanedTitle,
+          category_id: match.category_id || null
         };
-      } catch (error) {
-        console.error('Error fetching merchant mappings:', error);
-        return { title: cleanUpiTitle(statementTitle), category: null };
       }
+
+      // Strategy 2: Fallback to Title Match Only (Ignore Amount) - To infer category for same merchant
+      const fallbackMatch = mappings.find(m =>
+        m.category_id && ( // Only fallback if the match actually HAS a category
+          m.statement_title === statementTitle ||
+          m.clean_title === cleanedTitle ||
+          (m.mapped_title && m.mapped_title.toLowerCase() === cleanedTitle.toLowerCase())
+        )
+      );
+
+      if (fallbackMatch) {
+        return {
+          title: fallbackMatch.mapped_title || cleanedTitle, // Use mapped title if available
+          category_id: fallbackMatch.category_id // Use category from previous transaction
+        };
+      }
+
+      // If no match found, return the cleaned title and no category
+      return {
+        title: cleanedTitle,
+        category_id: null
+      };
     };
 
     const selectedAccount = accounts.find(a => a.id === parseInt(selectedAccountForImport));
@@ -642,13 +649,24 @@ function App() {
     // Show loading notification
     showNotification('Applying merchant mappings...', 'info');
 
+    // Fetch mappings once
+    let merchantMappingsList = [];
+    try {
+      const response = await fetch(`${API_BASE}/merchant-mappings`);
+      if (response.ok) {
+        merchantMappingsList = await response.json();
+      }
+    } catch (error) {
+      console.error('Error fetching mappings:', error);
+    }
+
     // Process the data using the mapping with merchant title lookup
     const processedDataPromises = rawImportData.map(async (row, index) => {
       const rawTitle = row[columnMapping.title] || '';
       const amount = parseAmount(row[columnMapping.amount]);
 
       // Get better title and category from merchant mappings
-      const mapping = await findMerchantMapping(amount, rawTitle);
+      const mapping = findMerchantMapping(merchantMappingsList, amount, rawTitle);
 
       // Try to find category ID if category name exists
       // Use mapped category_id if available

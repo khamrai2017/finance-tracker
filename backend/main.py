@@ -231,16 +231,29 @@ def load_merchant_mappings_from_csv():
 
 
 def find_merchant_title(amount: float, statement_title: str, db: Session, user_id: int = 1) -> str:
-    """Find better title from input.csv based on amount and statement title"""
+    """Find better title from merchant_mappings table or input.csv"""
     try:
         # Clean UPI title if applicable
         clean_title = clean_upi_title(statement_title)
 
-        # Load reference mappings from input.csv
-        mappings = load_merchant_mappings_from_csv()
+        # 1. Check database for existing mapping first (highest priority)
+        # Match by amount AND (statement_title OR clean_title OR mapped_title)
+        db_match = db.query(MerchantMapping).filter(
+            MerchantMapping.user_id == user_id,
+            abs(MerchantMapping.amount - amount) < 0.01
+        ).filter(
+            (MerchantMapping.statement_title == statement_title) |
+            (MerchantMapping.clean_title == clean_title) |
+            (MerchantMapping.mapped_title.ilike(clean_title))
+        ).first()
 
-        # Try to find exact match with amount and clean title
+        if db_match:
+            return db_match.mapped_title
+
+        # 2. If not in DB, check input.csv reference
+        mappings = load_merchant_mappings_from_csv()
         search_key = f"{amount}_{clean_title.lower()}"
+
         if search_key in mappings:
             mapping_data = mappings[search_key]
             mapped_title = mapping_data['title']
@@ -255,24 +268,17 @@ def find_merchant_title(amount: float, statement_title: str, db: Session, user_i
                 if category:
                     category_id = category.id
 
-            # Save the mapping to database
-            existing = db.query(MerchantMapping).filter(
-                MerchantMapping.user_id == user_id,
-                MerchantMapping.amount == amount,
-                MerchantMapping.statement_title == statement_title
-            ).first()
-
-            if not existing:
-                merchant_map = MerchantMapping(
-                    user_id=user_id,
-                    amount=amount,
-                    statement_title=statement_title,
-                    clean_title=clean_title,
-                    mapped_title=mapped_title,
-                    category_id=category_id
-                )
-                db.add(merchant_map)
-                db.commit()
+            # Save this new mapping to database for next time
+            merchant_map = MerchantMapping(
+                user_id=user_id,
+                amount=amount,
+                statement_title=statement_title,
+                clean_title=clean_title,
+                mapped_title=mapped_title,
+                category_id=category_id
+            )
+            db.add(merchant_map)
+            db.commit()
 
             return mapped_title
 
