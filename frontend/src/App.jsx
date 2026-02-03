@@ -21,22 +21,15 @@ const formatDate = (date) => {
     timeZone: 'Asia/Kolkata',
     year: '2-digit',
     month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false
+    day: '2-digit'
   });
 
   const parts = istFormatter.formatToParts(dateObj);
   const day = parts.find(p => p.type === 'day').value;
   const month = parts.find(p => p.type === 'month').value;
   const year = parts.find(p => p.type === 'year').value;
-  const hour = parts.find(p => p.type === 'hour').value;
-  const minute = parts.find(p => p.type === 'minute').value;
-  const second = parts.find(p => p.type === 'second').value;
 
-  return `${day}/${month}/${year} ${hour}:${minute}:${second}`;
+  return `${day}/${month}/${year}`;
 };
 
 const formatMonth = (date) => {
@@ -311,28 +304,6 @@ function App() {
     const response = await fetch(`${API_BASE}/budgets`);
     const data = await response.json();
     setBudgets(data);
-  };
-
-  const handleImportCSV = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const response = await fetch(`${API_BASE}/import/csv`, {
-        method: 'POST',
-        body: formData
-      });
-      const data = await response.json();
-      alert(data.message);
-      fetchTransactions();
-      fetchOverview();
-      fetchAnalytics();
-    } catch (error) {
-      alert('Import failed: ' + error.message);
-    }
   };
 
   // Sorting function
@@ -1759,16 +1730,6 @@ function App() {
             <div className="table-header">
               <h2 className="table-title">All Transactions</h2>
               <div style={{ display: 'flex', gap: '1rem' }}>
-                <label className="btn btn-secondary">
-                  <Upload size={18} />
-                  Import CSV
-                  <input
-                    type="file"
-                    accept=".csv"
-                    onChange={handleImportCSV}
-                    style={{ display: 'none' }}
-                  />
-                </label>
                 <button className="btn btn-primary" onClick={() => setShowAddTransaction(true)}>
                   <Plus size={18} />
                   Add Transaction
