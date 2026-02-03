@@ -5,7 +5,7 @@ import Dashboard from './pages/Dashboard';
 import Transactions from './pages/Transactions';
 import Budgets from './pages/Budgets';
 import Analytics from './pages/Analytics';
-import Import from './pages/Import';
+import Utilities from './pages/Utility';
 import { themes } from './config/themes';
 
 // Global Styles Component
@@ -773,7 +773,7 @@ function App() {
             <Route path="/transactions" element={<Transactions currentTheme={currentTheme} />} />
             <Route path="/budgets" element={<Budgets currentTheme={currentTheme} />} />
             <Route path="/analytics" element={<Analytics currentTheme={currentTheme} />} />
-            <Route path="/import" element={<Import currentTheme={currentTheme} />} />
+            <Route path="/utilities" element={<Utilities currentTheme={currentTheme} />} />
           </Routes>
         </div>
       </div>

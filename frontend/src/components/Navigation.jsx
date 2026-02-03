@@ -14,7 +14,7 @@ function Navigation({ currentTheme, setCurrentTheme }) {
     if (path === '/transactions') return 'transactions';
     if (path === '/budgets') return 'budgets';
     if (path === '/analytics') return 'analytics';
-    if (path === '/import') return 'import';
+    if (path === '/utilities') return 'utilities';
     return 'dashboard';
   };
 
@@ -25,7 +25,7 @@ function Navigation({ currentTheme, setCurrentTheme }) {
     { id: 'transactions', label: 'Transactions', path: '/transactions' },
     { id: 'budgets', label: 'Budgets', path: '/budgets' },
     { id: 'analytics', label: 'Analytics', path: '/analytics' },
-    { id: 'import', label: 'Import', path: '/import' }
+    { id: 'utilities', label: 'Utilities', path: '/utilities' }
   ];
 
   return (
