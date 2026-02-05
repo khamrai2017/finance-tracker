@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, FileDown, X } from 'lucide-react';
+import { Plus, FileDown, X, RefreshCcw, Search, Trash2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { fetchTransactions, fetchAccounts, fetchCategories, updateTransaction, createTransaction } from '../utils/api';
+import { fetchTransactions, fetchAccounts, fetchCategories, updateTransaction, createTransaction, deleteTransaction } from '../utils/api';
 import { formatCurrency, formatDate, formatMonth, formatDateTimeForInput } from '../utils/formatters';
 import { calculateTotalAmount, calculateSumByAccount } from '../utils/constants';
 import { themes } from '../config/themes';
@@ -25,21 +25,32 @@ function Transactions({ currentTheme }) {
 
   const theme = themes[currentTheme];
 
-  // Load data
-  useEffect(() => {
-    const loadData = async () => {
-      const [txnData, accData, catData] = await Promise.all([
-        fetchTransactions(searchTerm, filterCategory, filterAccount, filterStartDate, filterEndDate),
-        fetchAccounts(),
-        fetchCategories()
-      ]);
-      setTransactions(txnData);
-      setAccounts(accData);
-      setCategories(catData);
-    };
+  const toInputDateString = (dateVal) => {
+    if (!dateVal) return '';
+    const date = new Date(dateVal);
+    if (isNaN(date.getTime())) return '';
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
 
-    loadData();
+  // Load data
+  // Load data
+  const loadData = React.useCallback(async () => {
+    const [txnData, accData, catData] = await Promise.all([
+      fetchTransactions(searchTerm, filterCategory, filterAccount, filterStartDate, filterEndDate),
+      fetchAccounts(),
+      fetchCategories()
+    ]);
+    setTransactions(txnData);
+    setAccounts(accData);
+    setCategories(catData);
   }, [searchTerm, filterCategory, filterAccount, filterStartDate, filterEndDate]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   // Sorting function
   const handleSort = (key) => {
@@ -125,6 +136,23 @@ function Transactions({ currentTheme }) {
     }
   };
 
+  const handleDeleteTransaction = async (id) => {
+    if (window.confirm('Are you sure you want to delete this transaction?')) {
+      try {
+        const response = await deleteTransaction(id);
+        if (response.ok) {
+          loadData();
+          // alert('Transaction deleted');
+        } else {
+          alert('Failed to delete transaction');
+        }
+      } catch (error) {
+        console.error('Error deleting transaction:', error);
+        alert('Error deleting transaction');
+      }
+    }
+  };
+
   // Export transactions to Excel
   const handleExportExcel = () => {
     if (filteredTransactions.length === 0) {
@@ -201,7 +229,7 @@ function Transactions({ currentTheme }) {
             onClick={() => setShowModifyTransaction(!showModifyTransaction)}
             style={{ background: showModifyTransaction ? theme.secondary : theme.primary }}
           >
-            ✏️ Modify Transaction
+            ✏️ {showModifyTransaction ? 'Done Modifying' : 'Modify Transaction'}
           </button>
           <button className="btn btn-primary" onClick={handleExportExcel}>
             <FileDown size={18} />
@@ -221,6 +249,15 @@ function Transactions({ currentTheme }) {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
+        </div>
+        <div className="filter-group" style={{ display: 'flex', alignItems: 'flex-end' }}>
+          <button
+            className="btn btn-primary"
+            onClick={loadData}
+            title="Refresh Transactions"
+          >
+            <Search size={18} />
+          </button>
         </div>
         <div className="filter-group">
           <label className="form-label">Category</label>
@@ -414,6 +451,14 @@ function Transactions({ currentTheme }) {
                         >
                           ✏️ Edit
                         </button>
+                        <button
+                          className="copy-btn"
+                          onClick={() => handleDeleteTransaction(transaction.id)}
+                          title="Delete row"
+                          style={{ padding: '0.4rem 0.6rem', background: '#ef4444', color: 'white' }}
+                        >
+                          <Trash2 size={14} /> Delete
+                        </button>
                       </>
                     )}
                   </td>}
@@ -428,9 +473,9 @@ function Transactions({ currentTheme }) {
                       <div>
                         <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.5rem', color: '#333' }}>DATE & TIME</label>
                         <input
-                          type="datetime-local"
+                          type="date"
                           className="form-input"
-                          value={formatDateTimeForInput(editingData.date)}
+                          value={toInputDateString(editingData.date)}
                           onChange={(e) => setEditingData({ ...editingData, date: e.target.value })}
                           style={{ background: 'white' }}
                         />
@@ -530,9 +575,9 @@ function Transactions({ currentTheme }) {
                       <div>
                         <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '0.5rem', color: '#155724' }}>DATE & TIME</label>
                         <input
-                          type="datetime-local"
+                          type="date"
                           className="form-input"
-                          value={formatDateTimeForInput(copiedData.date)}
+                          value={toInputDateString(copiedData.date)}
                           onChange={(e) => setCopiedData({ ...copiedData, date: e.target.value })}
                           style={{ background: 'white' }}
                         />
@@ -653,7 +698,7 @@ function AddTransactionModal({ categories, accounts, onClose, onSuccess }) {
     amount: '',
     title: '',
     note: '',
-    date: new Date().toISOString().slice(0, 16),
+    date: new Date().toISOString().split('T')[0],
     is_income: false
   });
 
@@ -665,7 +710,7 @@ function AddTransactionModal({ categories, accounts, onClose, onSuccess }) {
         amount: parseFloat(formData.amount),
         account_id: parseInt(formData.account_id),
         category_id: parseInt(formData.category_id),
-        date: new Date(formData.date).toISOString()
+        date: formData.date // Already YYYY-MM-DD
       });
 
       if (response.ok) {
@@ -754,9 +799,9 @@ function AddTransactionModal({ categories, accounts, onClose, onSuccess }) {
           </div>
 
           <div className="form-group">
-            <label className="form-label">Date & Time</label>
+            <label className="form-label">Date</label>
             <input
-              type="datetime-local"
+              type="date"
               className="form-input"
               value={formData.date}
               onChange={e => setFormData({ ...formData, date: e.target.value })}

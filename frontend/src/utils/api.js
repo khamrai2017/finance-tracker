@@ -95,3 +95,10 @@ export const createTransaction = async (data) => {
   });
   return response;
 };
+
+export const deleteTransaction = async (id) => {
+  const response = await fetch(`${API_BASE}/transactions/${id}`, {
+    method: 'DELETE'
+  });
+  return response;
+};

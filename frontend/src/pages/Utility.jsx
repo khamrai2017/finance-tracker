@@ -49,14 +49,83 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
     setTimeout(() => setNotification(null), 4000);
   };
 
+  // Helper to parse date values into Date objects (Local Time)
+  const parseDate = (dateValue) => {
+    if (!dateValue) return null;
+
+    // If already a Date object
+    if (dateValue instanceof Date) {
+      return !isNaN(dateValue.getTime()) ? dateValue : null;
+    }
+
+    // If it's a number (Excel serial date)
+    if (typeof dateValue === 'number') {
+      const date = new Date((dateValue - 25569) * 86400 * 1000);
+      return !isNaN(date.getTime()) ? date : null;
+    }
+
+    // If it's a string, try different formats
+    if (typeof dateValue === 'string') {
+      const dateStr = dateValue.trim();
+
+      // Try dd-mm-yyyy format (with -, /, or . separators)
+      const ddmmyyyyMatch = dateStr.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})$/);
+      if (ddmmyyyyMatch) {
+        const day = parseInt(ddmmyyyyMatch[1]);
+        const month = parseInt(ddmmyyyyMatch[2]);
+        const year = parseInt(ddmmyyyyMatch[3]);
+
+        // Validate day and month
+        if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+          return new Date(year, month - 1, day);
+        }
+      }
+
+      // Try yyyy-mm-dd format (ISO)
+      const isoMatch = dateStr.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/);
+      if (isoMatch) {
+        const year = parseInt(isoMatch[1]);
+        const month = parseInt(isoMatch[2]);
+        const day = parseInt(isoMatch[3]);
+
+        // Validate day and month
+        if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+          return new Date(year, month - 1, day);
+        }
+      }
+
+      // Try standard JavaScript date parsing as fallback
+      const date = new Date(dateStr);
+      return !isNaN(date.getTime()) ? date : null;
+    }
+
+    return null;
+  };
+
+  // Helper to format Date to YYYY-MM-DD string
+  const toISODateString = (date) => {
+    if (!date) return new Date().toISOString().split('T')[0];
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   React.useEffect(() => {
     const loadData = async () => {
-      const [accData, catData] = await Promise.all([
-        fetchAccounts(),
-        fetchCategories()
-      ]);
-      setAccounts(accData);
-      setCategories(catData);
+      try {
+        const [accData, catData, mapData] = await Promise.all([
+          fetchAccounts(),
+          fetchCategories(),
+          fetchMerchantMappings()
+        ]);
+        setAccounts(accData);
+        setCategories(catData);
+        setMerchantMappings(mapData);
+      } catch (error) {
+        console.error("Error loading data:", error);
+        showNotification("Failed to load data", "error");
+      }
     };
 
     loadData();
@@ -167,6 +236,35 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
               }
             }
 
+            // Parse date robustly
+            let parsedDate = null;
+            if (dateValue) {
+              if (typeof dateValue === 'number') {
+                // Excel serial date
+                parsedDate = new Date(Math.round((dateValue - 25569) * 86400 * 1000));
+              } else if (dateValue instanceof Date) {
+                parsedDate = dateValue;
+              } else if (typeof dateValue === 'string') {
+                const cleaned = dateValue.trim();
+                // Try DD/MM/YY or DD/MM/YYYY
+                const ddmmyy = cleaned.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})$/);
+                if (ddmmyy) {
+                  const day = parseInt(ddmmyy[1], 10);
+                  const month = parseInt(ddmmyy[2], 10) - 1;
+                  let year = parseInt(ddmmyy[3], 10);
+                  if (year < 100) year += 2000; // Assume 20xx for 2-digit years
+                  parsedDate = new Date(year, month, day);
+                } else {
+                  // Try standard parsing
+                  parsedDate = new Date(cleaned);
+                }
+              }
+            }
+            // Fallback if parsing failed or invalid
+            if (!parsedDate || isNaN(parsedDate.getTime())) {
+              parsedDate = new Date(); // Default to today or handle error? Today is safer than crashing
+            }
+
             return {
               id: index,
               title: mapping.title,
@@ -176,7 +274,7 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
               category_id: categoryId,
               account_name: supermoneyAccount?.name || '',
               account_id: supermoneyAccount?.id || null,
-              date: dateValue || new Date().toISOString(),
+              date: parsedDate.toISOString(), // Store as normalized ISO string
               is_income: isIncome,
               note: note,
               _isProcessed: true
@@ -302,7 +400,7 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
         category_id: matchedCategoryId,
         account_name: selectedAccount?.name || '',
         account_id: parseInt(selectedAccountForImport),
-        date: columnMapping.date ? row[columnMapping.date] : new Date().toISOString(),
+        date: toISODateString(parseDate(columnMapping.date ? row[columnMapping.date] : null) || new Date()),
         is_income: determineIsIncome(row, columnMapping.debitCredit),
         note: columnMapping.note ? (row[columnMapping.note] || '') : ''
       };
@@ -378,7 +476,7 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
         amount: record.amount,
         category_id: record.category_id,
         account_id: record.account_id,
-        date: new Date(record.date).toISOString(),
+        date: record.date, // Already formatted as YYYY-MM-DD
         is_income: record.is_income,
         note: record.note
       };
@@ -417,6 +515,9 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
       // Filter by date range
       const startDate = new Date(matchStartDate);
       const endDate = new Date(matchEndDate);
+      // Set end date to end of day to include all transactions on that date
+      endDate.setHours(23, 59, 59, 999);
+
       const filtered = allTrans.filter(t => {
         const tDate = new Date(t.date);
         return tDate >= startDate && tDate <= endDate;
@@ -438,23 +539,67 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
     }
 
     setMatchLoading(true);
-    const matched = importedData.map(imported => {
-      // Find matching transaction in database
-      const dbMatch = databaseTransactions.find(db => {
-        // Add null/undefined checks before calling toLowerCase()
-        if (!imported.title || !db.title) return false;
 
-        const titleMatch = imported.title.toLowerCase().includes(db.title.toLowerCase()) ||
-          db.title.toLowerCase().includes(imported.title.toLowerCase());
-        const amountMatch = Math.abs(imported.amount - db.amount) < 0.01;
-        return titleMatch && amountMatch;
+    // Track matched database IDs to ensure 1-to-1 matching
+    const matchedDbIds = new Set();
+
+    const matched = importedData.map(imported => {
+      // Helper for date matching (ignoring time)
+      const isDateMatch = (d1, d2) => {
+        if (!d1 || !d2) return false;
+        try {
+          // Robust comparison: Convert both to Date objects using parseDate
+          // This ensures we treat YYYY-MM-DD strings as Local Dates (midnight)
+          // instead of UTC (which checks against browser timezone and might shift day)
+          const date1 = parseDate(d1);
+          const date2 = parseDate(d2);
+
+          // Check if valid dates
+          if (!date1 || !date2 || isNaN(date1.getTime()) || isNaN(date2.getTime())) return false;
+
+          // Compare standard date strings (YYYY-MM-DD) based on getFullYear/Month/Date
+          const toYMD = (d) => {
+            return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+          };
+
+          return toYMD(date1) === toYMD(date2);
+        } catch (e) {
+          return false;
+        }
+      };
+
+      // Helper for amount matching
+      const isAmountMatch = (a1, a2) => Math.abs(a1 - a2) < 0.01;
+
+      // 1. Try to find match based on Date and Amount ONLY
+      // We also check !matchedDbIds.has(db.id) to prevent multiple imports matching the same DB entry
+      const dbMatch = databaseTransactions.find(db => {
+        return !matchedDbIds.has(db.id) &&
+          isDateMatch(imported.date, db.date) &&
+          isAmountMatch(imported.amount, db.amount);
       });
 
+      // Stable ID for UI
+      const uiId = `imported_${imported.id}`;
+
+      if (dbMatch) {
+        matchedDbIds.add(dbMatch.id);
+        return {
+          ...imported,
+          id: uiId,
+          matched: true,
+          matchedTransaction: dbMatch,
+          matchReason: 'Matched'
+        };
+      }
+
+      // No partial match logic - only strict matching requested
       return {
-        id: `imported_${Math.random()}`,
         ...imported,
-        matched: !!dbMatch,
-        matchedTransaction: dbMatch
+        id: uiId,
+        matched: false,
+        matchedTransaction: null,
+        matchReason: 'No match found'
       };
     });
 
@@ -465,18 +610,112 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
   };
 
   const handleDeleteTransaction = async (transactionId) => {
-    if (!window.confirm('Are you sure you want to delete this transaction?')) return;
+    if (!window.confirm('Remove this transaction from the list?')) return;
 
     try {
-      await fetch(`${API_BASE}/transactions/${transactionId}`, {
-        method: 'DELETE'
-      });
+      if (typeof transactionId === 'string' && transactionId.startsWith('imported_')) {
+        const originalId = parseInt(transactionId.replace('imported_', ''));
 
-      // Remove from matched list
-      setMatchedTransactions(prev => prev.filter(t => t.id !== transactionId));
-      showNotification('Transaction deleted successfully', 'success');
+        // Remove from importedData
+        const newImportedData = importedData.filter(item => item.id !== originalId);
+        setImportedData(newImportedData);
+
+        // Remove from matched list
+        setMatchedTransactions(prev => prev.filter(t => t.id !== transactionId));
+        showNotification('Transaction removed from list', 'success');
+      } else {
+        // Fallback for DB deletion if ID is not imported_X
+        await fetch(`${API_BASE}/transactions/${transactionId}`, {
+          method: 'DELETE'
+        });
+
+        setMatchedTransactions(prev => prev.filter(t => t.id !== transactionId));
+        setDatabaseTransactions(prev => prev.filter(t => t.id !== transactionId));
+        showNotification('Transaction deleted from database', 'success');
+      }
     } catch (error) {
       showNotification('Failed to delete transaction: ' + error.message, 'error');
+    }
+  };
+
+  const handleInsertTransaction = async (transaction) => {
+    if (!matchAccountId) {
+      showNotification('No account selected', 'error');
+      return;
+    }
+
+    // Determine category from mapping if not already set or to confirm
+    let categoryId = transaction.category_id;
+    let title = transaction.title;
+
+    // Perform lookup in merchant mappings
+    const rawTitle = transaction.original_title || transaction.title || '';
+    const cleanedTitle = cleanUpiTitle(rawTitle);
+
+    // Helper to check match
+    const match = merchantMappings.find(m =>
+      // Amount match
+      Math.abs(m.amount - transaction.amount) < 0.01 &&
+      // Title match
+      (m.statement_title === rawTitle || m.clean_title === cleanedTitle || (m.mapped_title && m.mapped_title === title))
+    );
+
+    if (match) {
+      if (match.category_id) categoryId = match.category_id;
+      if (match.mapped_title) title = match.mapped_title;
+    }
+
+    // If still no category, try to find "Imported" category or default to first
+    if (!categoryId) {
+      const importedCat = categories.find(c => c.name === 'Imported');
+      if (importedCat) categoryId = importedCat.id;
+      else if (categories.length > 0) categoryId = categories[0].id;
+    }
+
+    const payload = {
+      account_id: parseInt(matchAccountId),
+      category_id: categoryId,
+      amount: transaction.amount,
+      title: title,
+      date: transaction.date, // Should be YYYY-MM-DD strings already
+      is_income: transaction.is_income || false,
+      note: transaction.note || '',
+      merchant: transaction.original_title
+    };
+
+    try {
+      const response = await fetch(`${API_BASE}/transactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.detail || 'Failed to insert');
+      }
+
+      const newTx = await response.json();
+      showNotification('Transaction inserted', 'success');
+
+      // Update state to show as matched
+      setMatchedTransactions(prev => prev.map(t => {
+        if (t.id === transaction.id) {
+          return {
+            ...t,
+            matched: true,
+            matchedTransaction: newTx,
+            matchReason: 'Inserted manually'
+          };
+        }
+        return t;
+      }));
+
+      // Add to database transactions list
+      setDatabaseTransactions(prev => [...prev, newTx]);
+
+    } catch (error) {
+      showNotification(error.message, 'error');
     }
   };
 
@@ -490,6 +729,13 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
         setMatchedTransactions(prev =>
           prev.map(t => t.id === editingMatchId ? { ...t, ...editingMatchData } : t)
         );
+
+        // Update importedData so Rematch works correctly
+        const originalId = parseInt(editingMatchId.replace('imported_', ''));
+        setImportedData(prev =>
+          prev.map(item => item.id === originalId ? { ...item, ...editingMatchData } : item)
+        );
+
         showNotification('Transaction updated', 'success');
       } else {
         // For database, save to API
@@ -502,6 +748,11 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
         setMatchedTransactions(prev =>
           prev.map(t => t.id === editingMatchId ? { ...t, ...editingMatchData } : t)
         );
+
+        setDatabaseTransactions(prev =>
+          prev.map(t => t.id === editingMatchId ? { ...t, ...editingMatchData } : t)
+        );
+
         showNotification('Transaction saved successfully', 'success');
       }
 
@@ -519,60 +770,7 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
     }
 
     try {
-      // Helper function to parse different date formats
-      const parseDate = (dateValue) => {
-        if (!dateValue) return null;
-
-        // If already a Date object
-        if (dateValue instanceof Date) {
-          return !isNaN(dateValue.getTime()) ? dateValue : null;
-        }
-
-        // If it's a number (Excel serial date)
-        if (typeof dateValue === 'number') {
-          const date = new Date((dateValue - 25569) * 86400 * 1000);
-          return !isNaN(date.getTime()) ? date : null;
-        }
-
-        // If it's a string, try different formats
-        if (typeof dateValue === 'string') {
-          const dateStr = dateValue.trim();
-
-          // Try dd-mm-yyyy format (with -, /, or . separators)
-          const ddmmyyyyMatch = dateStr.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})$/);
-          if (ddmmyyyyMatch) {
-            const day = parseInt(ddmmyyyyMatch[1]);
-            const month = parseInt(ddmmyyyyMatch[2]);
-            const year = parseInt(ddmmyyyyMatch[3]);
-
-            // Validate day and month
-            if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
-              const date = new Date(year, month - 1, day);
-              return !isNaN(date.getTime()) ? date : null;
-            }
-          }
-
-          // Try yyyy-mm-dd format (ISO)
-          const isoMatch = dateStr.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/);
-          if (isoMatch) {
-            const year = parseInt(isoMatch[1]);
-            const month = parseInt(isoMatch[2]);
-            const day = parseInt(isoMatch[3]);
-
-            // Validate day and month
-            if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
-              const date = new Date(year, month - 1, day);
-              return !isNaN(date.getTime()) ? date : null;
-            }
-          }
-
-          // Try standard JavaScript date parsing as fallback
-          const date = new Date(dateStr);
-          return !isNaN(date.getTime()) ? date : null;
-        }
-
-        return null;
-      };
+      // Helper function refactored to component scope: parseDate
 
       // Extract all dates from imported data
       const dates = importedData
@@ -588,9 +786,9 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
       const minDate = new Date(Math.min(...dates.map(d => d.getTime())));
       const maxDate = new Date(Math.max(...dates.map(d => d.getTime())));
 
-      // Format dates as YYYY-MM-DD for input fields
-      const startDateStr = minDate.toISOString().split('T')[0];
-      const endDateStr = maxDate.toISOString().split('T')[0];
+      // Format dates as YYYY-MM-DD for input fields (Local Time)
+      const startDateStr = toISODateString(minDate);
+      const endDateStr = toISODateString(maxDate);
 
       // Set the date range
       setMatchStartDate(startDateStr);
@@ -835,7 +1033,7 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
                       <thead style={{ position: 'sticky', top: 0, backgroundColor: theme.cardBg, zIndex: 1 }}>
                         <tr>
                           {Object.keys(importedData[0]).filter(k => k !== 'id' && k !== '_isRaw').map(col => (
-                            <th key={col} style={{ padding: '0.75rem', fontWeight: 600, borderBottom: `2px solid ${theme.accentLight}` }}>
+                            <th key={col} style={{ padding: '0.75rem', fontWeight: 600, maxWidth: '80px', wordBreak: 'break-word', borderBottom: `2px solid ${theme.accentLight}` }}>
                               {col}
                             </th>
                           ))}
@@ -845,7 +1043,7 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
                         {importedData.map((row, idx) => (
                           <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? theme.accentLighter : 'transparent' }}>
                             {Object.keys(row).filter(k => k !== 'id' && k !== '_isRaw').map(col => (
-                              <td key={`${idx}-${col}`} style={{ padding: '0.75rem', borderBottom: `1px solid ${theme.accentLight}` }}>
+                              <td key={`${idx}-${col}`} style={{ padding: '0.75rem', maxWidth: '80px', wordBreak: 'break-word', borderBottom: `1px solid ${theme.accentLight}` }}>
                                 {String(row[col]).substring(0, 50)}
                               </td>
                             ))}
@@ -929,7 +1127,7 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
 
                           const categoryName = selectedCategory?.name || '';
                           const accountName = accounts.find(a => a.id === parseInt(selectedAccountForImport))?.name || '(Select Account)';
-                          const date = columnMapping.date ? row[columnMapping.date] : new Date().toISOString();
+                          const date = toISODateString(parseDate(columnMapping.date ? row[columnMapping.date] : null) || new Date());
                           const isIncome = determineIsIncome(row, columnMapping.debitCredit);
                           const note = columnMapping.note ? (row[columnMapping.note] || '') : '';
 
@@ -1044,8 +1242,8 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
                     <thead>
                       <tr>
                         <th style={{ width: '50px' }}>Select</th>
-                        <th>Original Title</th>
-                        <th>Title</th>
+                        <th style={{ maxWidth: '80px', wordBreak: 'break-word' }}>Original Title</th>
+                        <th style={{ maxWidth: '80px', wordBreak: 'break-word' }}>Title</th>
                         <th>Amount</th>
                         <th>Category</th>
                         <th>Account</th>
@@ -1114,9 +1312,9 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
                               </td>
                               <td>
                                 <input
-                                  type="datetime-local"
-                                  value={formatDateTimeForInput(editingImportData.date)}
-                                  onChange={e => setEditingImportData({ ...editingImportData, date: new Date(e.target.value).toISOString() })}
+                                  type="date"
+                                  value={toISODateString(editingImportData.date)}
+                                  onChange={e => setEditingImportData({ ...editingImportData, date: e.target.value })}
                                   className="form-input"
                                   style={{ padding: '0.5rem', minWidth: '150px' }}
                                 />
@@ -1700,6 +1898,7 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
                         <th style={{ padding: '0.75rem', textAlign: 'left', color: theme.text, fontWeight: '500' }}>Amount</th>
                         <th style={{ padding: '0.75rem', textAlign: 'left', color: theme.text, fontWeight: '500' }}>Date</th>
                         <th style={{ padding: '0.75rem', textAlign: 'left', color: theme.text, fontWeight: '500' }}>Matched With</th>
+                        <th style={{ padding: '0.75rem', textAlign: 'left', color: theme.text, fontWeight: '500' }}>Reason</th>
                         <th style={{ padding: '0.75rem', textAlign: 'center', color: theme.text, fontWeight: '500' }}>Actions</th>
                       </tr>
                     </thead>
@@ -1728,7 +1927,7 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
                                 {transaction.matched ? '✓ Matched' : '✗ Unmatched'}
                               </span>
                             </td>
-                            <td style={{ padding: '0.75rem', color: theme.text }}>
+                            <td style={{ padding: '0.75rem', color: theme.text, maxWidth: '120px', wordWrap: 'break-word', whiteSpace: 'normal', overflowWrap: 'break-word', fontSize: '0.85rem' }}>
                               {editingMatchId === transaction.id ? (
                                 <input
                                   type="text"
@@ -1763,14 +1962,21 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
                                   }}
                                 />
                               ) : (
-                                formatCurrency(transaction.amount)
+                                <div>
+                                  <div>{formatCurrency(transaction.amount)}</div>
+                                  {transaction.matched && transaction.matchedTransaction && (
+                                    <div style={{ fontSize: '0.75rem', color: theme.textSecondary, marginTop: '2px' }}>
+                                      DB: {formatCurrency(transaction.matchedTransaction.amount)}
+                                    </div>
+                                  )}
+                                </div>
                               )}
                             </td>
                             <td style={{ padding: '0.75rem', color: theme.text }}>
                               {editingMatchId === transaction.id ? (
                                 <input
                                   type="date"
-                                  value={editingMatchData.date || transaction.date}
+                                  value={(editingMatchData.date || transaction.date || '').split('T')[0]}
                                   onChange={(e) => setEditingMatchData({ ...editingMatchData, date: e.target.value })}
                                   style={{
                                     width: '100%',
@@ -1782,7 +1988,14 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
                                   }}
                                 />
                               ) : (
-                                formatDate(transaction.date)
+                                <div>
+                                  <div>{formatDate(transaction.date)}</div>
+                                  {transaction.matched && transaction.matchedTransaction && (
+                                    <div style={{ fontSize: '0.75rem', color: theme.textSecondary, marginTop: '2px' }}>
+                                      DB: {formatDate(transaction.matchedTransaction.date)}
+                                    </div>
+                                  )}
+                                </div>
                               )}
                             </td>
                             <td style={{ padding: '0.75rem', color: theme.text, fontSize: '0.875rem' }}>
@@ -1794,6 +2007,9 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
                               ) : (
                                 <span style={{ color: theme.textSecondary }}>—</span>
                               )}
+                            </td>
+                            <td style={{ padding: '0.75rem', color: theme.textSecondary, fontSize: '0.875rem', maxWidth: '150px' }}>
+                              {transaction.matchReason || '-'}
                             </td>
                             <td style={{ padding: '0.75rem', textAlign: 'center' }}>
                               {editingMatchId === transaction.id ? (
@@ -1832,6 +2048,25 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
                                 </div>
                               ) : (
                                 <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                                  {!transaction.matched && (
+                                    <button
+                                      onClick={() => handleInsertTransaction(transaction)}
+                                      style={{
+                                        padding: '0.4rem 0.8rem',
+                                        backgroundColor: '#10b981',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        fontSize: '0.75rem',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.25rem'
+                                      }}
+                                    >
+                                      <Upload size={12} /> Insert
+                                    </button>
+                                  )}
                                   <button
                                     onClick={() => {
                                       setEditingMatchId(transaction.id);
@@ -1872,27 +2107,46 @@ function Utility({ currentTheme, defaultSection = 'import', hideSelector = false
                   </table>
                 </div>
 
-                <button
-                  onClick={() => {
-                    setMatchedTransactions([]);
-                    setImportedData([]);
-                    setDatabaseTransactions([]);
-                    setMatchAccountId('');
-                    setMatchStartDate('');
-                    setMatchEndDate('');
-                    setShowOnlyUnmatched(false);
-                  }}
-                  style={{
-                    padding: '0.75rem 1.5rem',
-                    backgroundColor: theme.border,
-                    color: theme.text,
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  Start New Comparison
-                </button>
+                <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+                  <button
+                    onClick={compareTransactions}
+                    style={{
+                      padding: '0.75rem 1.5rem',
+                      backgroundColor: theme.primary,
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem'
+                    }}
+                  >
+                    <GitCompare size={18} />
+                    Rematch
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMatchedTransactions([]);
+                      setImportedData([]);
+                      setDatabaseTransactions([]);
+                      setMatchAccountId('');
+                      setMatchStartDate('');
+                      setMatchEndDate('');
+                      setShowOnlyUnmatched(false);
+                    }}
+                    style={{
+                      padding: '0.75rem 1.5rem',
+                      backgroundColor: theme.border,
+                      color: theme.text,
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Start New Comparison
+                  </button>
+                </div>
               </div>
             )}
           </div>
